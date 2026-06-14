@@ -20,14 +20,22 @@
       </section>
 
       <section class="panel" id="loginPanel">
-        <h2>Connexion admin</h2>
-        <form id="loginForm" class="login-form">
-          <label>
-            Token admin
-            <input id="adminToken" type="password" autocomplete="current-password" placeholder="WEB_ADMIN_TOKEN">
-          </label>
-          <button type="submit">Se connecter</button>
-        </form>
+        <h2>Installer et administrer</h2>
+        <p class="hint">Ajoute le bot au serveur Discord, puis connecte-toi avec un compte qui possède un rôle admin autorisé.</p>
+        <div class="login-form">
+          <a class="button-link secondary" id="inviteBotLink" href="/auth/discord/invite">Ajouter à Discord</a>
+          <a class="button-link" id="discordLoginLink" href="/auth/discord/login">Connexion Discord</a>
+        </div>
+        <p class="hint" id="authHelp"></p>
+        <div class="setup-form">
+          <h3>Setup serveur</h3>
+          <div class="grid two">
+            <label>Mot de passe setup <input id="setupPassword" type="password" autocomplete="current-password"></label>
+            <label>ID serveur Discord <input id="setupGuildId" placeholder="123456789012345678"></label>
+            <label>Rôles admin <input id="setupAdminRoleIds" placeholder="role_id_1,role_id_2"></label>
+          </div>
+          <button type="button" class="secondary" id="saveDiscordSetup">Enregistrer le serveur</button>
+        </div>
       </section>
 
       <form id="eventForm" class="layout hidden">

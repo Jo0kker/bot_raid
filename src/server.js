@@ -1,15 +1,25 @@
 const http = require("node:http");
 const fs = require("node:fs/promises");
 const path = require("node:path");
+const crypto = require("node:crypto");
+const { PermissionFlagsBits } = require("discord.js");
 const { loadConfig, saveConfig } = require("./config");
 const { createEvent, deleteEvent, getEvent, readEvents, updateEvent } = require("./storage");
 const { deleteEventMessage, getGuildOptions, publishEvent } = require("./bot");
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
+const SESSION_COOKIE = "gw_events_session";
+const OAUTH_STATE_COOKIE = "gw_events_oauth_state";
+const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 function sendJson(response, status, payload) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(payload));
+}
+
+function redirect(response, location) {
+  response.writeHead(302, { Location: location });
+  response.end();
 }
 
 async function readBody(request) {
@@ -21,9 +31,16 @@ async function readBody(request) {
 }
 
 function assertAdmin(request) {
+  const session = readSession(request);
+  if (session) {
+    return session;
+  }
+
   const expected = process.env.WEB_ADMIN_TOKEN;
   if (!expected) {
-    return;
+    const error = new Error("Connexion Discord requise.");
+    error.status = 401;
+    throw error;
   }
 
   if (request.headers["x-admin-token"] !== expected) {
@@ -31,6 +48,239 @@ function assertAdmin(request) {
     error.status = 401;
     throw error;
   }
+}
+
+function parseCookies(request) {
+  return Object.fromEntries(
+    String(request.headers.cookie || "")
+      .split(";")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const index = part.indexOf("=");
+        return [part.slice(0, index), decodeURIComponent(part.slice(index + 1))];
+      })
+  );
+}
+
+function cookieHeader(name, value, options = {}) {
+  const parts = [
+    `${name}=${encodeURIComponent(value)}`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax"
+  ];
+  if (options.maxAge !== undefined) {
+    parts.push(`Max-Age=${options.maxAge}`);
+  }
+  if (process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production") {
+    parts.push("Secure");
+  }
+  return parts.join("; ");
+}
+
+function authSecret() {
+  const secret = process.env.WEB_SESSION_SECRET || process.env.WEB_ADMIN_TOKEN || process.env.DISCORD_CLIENT_SECRET;
+  if (!secret) {
+    throw new Error("WEB_SESSION_SECRET ou DISCORD_CLIENT_SECRET est requis pour les sessions OAuth.");
+  }
+  return secret;
+}
+
+function sign(value) {
+  return crypto.createHmac("sha256", authSecret()).update(value).digest("base64url");
+}
+
+function createSessionCookie(session) {
+  const payload = Buffer.from(JSON.stringify({
+    ...session,
+    exp: Math.floor(Date.now() / 1000) + SESSION_MAX_AGE_SECONDS
+  })).toString("base64url");
+  return `${payload}.${sign(payload)}`;
+}
+
+function readSession(request) {
+  const raw = parseCookies(request)[SESSION_COOKIE];
+  if (!raw) {
+    return null;
+  }
+
+  const [payload, signature] = raw.split(".");
+  if (!payload || !signature || signature !== sign(payload)) {
+    return null;
+  }
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!session.exp || session.exp < Math.floor(Date.now() / 1000)) {
+      return null;
+    }
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function baseUrl(request) {
+  if (process.env.PUBLIC_BASE_URL) {
+    return process.env.PUBLIC_BASE_URL.replace(/\/+$/, "");
+  }
+  const proto = request.headers["x-forwarded-proto"] || "http";
+  const host = request.headers["x-forwarded-host"] || request.headers.host || `localhost:${process.env.WEB_PORT || 3000}`;
+  return `${proto}://${host}`;
+}
+
+function oauthRedirectUri(request) {
+  return process.env.DISCORD_OAUTH_REDIRECT_URI || `${baseUrl(request)}/auth/discord/callback`;
+}
+
+function requiredOAuthEnv() {
+  for (const key of ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"]) {
+    if (!process.env[key]) {
+      throw new Error(`${key} est requis pour OAuth Discord.`);
+    }
+  }
+}
+
+function normalizeCsvIds(value) {
+  return String(value || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean);
+}
+
+async function discordSettings() {
+  const config = await loadConfig();
+  return {
+    guildId: config.discord?.guildId || "",
+    adminRoleIds: Array.isArray(config.discord?.adminRoleIds) ? config.discord.adminRoleIds : []
+  };
+}
+
+async function updateDiscordSettings(input) {
+  const guildId = normalizeDiscordId(input.guildId);
+  if (!guildId) {
+    const error = new Error("ID serveur Discord invalide.");
+    error.status = 400;
+    throw error;
+  }
+
+  const config = await loadConfig();
+  config.discord = {
+    ...(config.discord || {}),
+    guildId,
+    adminRoleIds: Array.isArray(input.adminRoleIds)
+      ? input.adminRoleIds.map(normalizeDiscordId).filter(Boolean)
+      : normalizeCsvIds(input.adminRoleIds).map(normalizeDiscordId).filter(Boolean)
+  };
+  return saveConfig(config);
+}
+
+function assertSetupPassword(input) {
+  const expected = process.env.WEB_SETUP_PASSWORD || process.env.WEB_ADMIN_TOKEN;
+  if (!expected || input.password !== expected) {
+    const error = new Error("Mot de passe setup invalide.");
+    error.status = 401;
+    throw error;
+  }
+}
+
+function discordLoginUrl(request, state) {
+  requiredOAuthEnv();
+  const params = new URLSearchParams({
+    client_id: process.env.DISCORD_CLIENT_ID,
+    redirect_uri: oauthRedirectUri(request),
+    response_type: "code",
+    scope: "identify guilds.members.read",
+    state,
+    prompt: "none"
+  });
+  return `https://discord.com/oauth2/authorize?${params}`;
+}
+
+function discordInviteUrl(request) {
+  const permissions = (
+    PermissionFlagsBits.ViewChannel |
+    PermissionFlagsBits.SendMessages |
+    PermissionFlagsBits.EmbedLinks |
+    PermissionFlagsBits.ReadMessageHistory |
+    PermissionFlagsBits.UseExternalEmojis |
+    PermissionFlagsBits.ManageGuildExpressions
+  ).toString();
+  const params = new URLSearchParams({
+    client_id: process.env.DISCORD_CLIENT_ID || "",
+    permissions,
+    scope: "bot applications.commands"
+  });
+  return `https://discord.com/oauth2/authorize?${params}`;
+}
+
+async function discordApi(pathname, accessToken) {
+  const response = await fetch(`https://discord.com/api/v10${pathname}`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.message || "Discord OAuth API error.");
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+async function exchangeDiscordCode(request, code) {
+  requiredOAuthEnv();
+  const response = await fetch("https://discord.com/api/v10/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      client_id: process.env.DISCORD_CLIENT_ID,
+      client_secret: process.env.DISCORD_CLIENT_SECRET,
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: oauthRedirectUri(request)
+    })
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(payload.error_description || payload.message || "Échange OAuth Discord impossible.");
+    error.status = 401;
+    throw error;
+  }
+  return payload;
+}
+
+async function createOAuthSession(request, code) {
+  const token = await exchangeDiscordCode(request, code);
+  const user = await discordApi("/users/@me", token.access_token);
+  const settings = await discordSettings();
+  if (!settings.guildId) {
+    const error = new Error("Aucun serveur Discord n'est configuré. Utilise le setup avant de te connecter.");
+    error.status = 403;
+    throw error;
+  }
+
+  const member = await discordApi(`/users/@me/guilds/${settings.guildId}/member`, token.access_token);
+  const allowedRoles = settings.adminRoleIds;
+  if (allowedRoles.length === 0) {
+    const error = new Error("Aucun rôle admin configuré. Utilise le setup serveur avant la connexion OAuth.");
+    error.status = 403;
+    throw error;
+  }
+
+  const hasAllowedRole = member.roles?.some((roleId) => allowedRoles.includes(roleId));
+  if (!hasAllowedRole) {
+    const error = new Error("Accès refusé: ton compte Discord n'a pas un rôle admin autorisé.");
+    error.status = 403;
+    throw error;
+  }
+  return {
+    userId: user.id,
+    username: user.username,
+    globalName: user.global_name,
+    avatar: user.avatar,
+    roles: member.roles || []
+  };
 }
 
 function timeZoneOffsetMs(date, timeZone) {
@@ -114,7 +364,7 @@ async function resolveLeader(client, value) {
     return { leader: "", leaderUserId: directId };
   }
 
-  const guildId = process.env.DISCORD_GUILD_ID;
+  const { guildId } = await discordSettings();
   if (!guildId) {
     return { leader: raw, leaderUserId: "" };
   }
@@ -149,9 +399,9 @@ async function resolveLeader(client, value) {
 }
 
 async function searchGuildMembers(client, queryValue, limit = 10) {
-  const guildId = process.env.DISCORD_GUILD_ID;
+  const { guildId } = await discordSettings();
   if (!guildId) {
-    const error = new Error("DISCORD_GUILD_ID manquant.");
+    const error = new Error("Aucun serveur Discord configuré.");
     error.status = 400;
     throw error;
   }
@@ -212,9 +462,9 @@ function normalizeEmojiName(value) {
 }
 
 async function createGuildEmojiFromUpload(client, input) {
-  const guildId = process.env.DISCORD_GUILD_ID;
+  const { guildId } = await discordSettings();
   if (!guildId) {
-    const error = new Error("DISCORD_GUILD_ID manquant.");
+    const error = new Error("Aucun serveur Discord configuré.");
     error.status = 400;
     throw error;
   }
@@ -336,6 +586,83 @@ function createServer(client) {
     try {
       const url = new URL(request.url, "http://localhost");
 
+      if (request.method === "GET" && url.pathname === "/api/auth/me") {
+        const session = readSession(request);
+        const settings = await discordSettings();
+        sendJson(response, 200, {
+          authenticated: Boolean(session),
+          user: session ? {
+            id: session.userId,
+            username: session.username,
+            globalName: session.globalName,
+            avatar: session.avatar
+          } : null,
+          inviteUrl: discordInviteUrl(request),
+          loginUrl: "/auth/discord/login",
+          oauthConfigured: Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET),
+          setupConfigured: Boolean(settings.guildId),
+          guildId: settings.guildId,
+          adminRolesConfigured: settings.adminRoleIds.length > 0,
+          scopes: ["identify", "guilds.members.read"]
+        });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/setup/discord") {
+        const input = await readBody(request);
+        assertSetupPassword(input);
+        const config = await updateDiscordSettings(input);
+        sendJson(response, 200, { config, discord: config.discord });
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/logout") {
+        response.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Set-Cookie": cookieHeader(SESSION_COOKIE, "", { maxAge: 0 })
+        });
+        response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/auth/discord/invite") {
+        redirect(response, discordInviteUrl(request));
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/auth/discord/login") {
+        const state = crypto.randomBytes(24).toString("base64url");
+        response.writeHead(302, {
+          Location: discordLoginUrl(request, state),
+          "Set-Cookie": cookieHeader(OAUTH_STATE_COOKIE, state, { maxAge: 10 * 60 })
+        });
+        response.end();
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/auth/discord/callback") {
+        const expectedState = parseCookies(request)[OAUTH_STATE_COOKIE];
+        if (!expectedState || expectedState !== url.searchParams.get("state")) {
+          sendJson(response, 400, { error: "État OAuth invalide." });
+          return;
+        }
+        const code = url.searchParams.get("code");
+        if (!code) {
+          sendJson(response, 400, { error: "Code OAuth manquant." });
+          return;
+        }
+        const session = await createOAuthSession(request, code);
+        response.writeHead(302, {
+          Location: "/",
+          "Set-Cookie": [
+            cookieHeader(SESSION_COOKIE, createSessionCookie(session), { maxAge: SESSION_MAX_AGE_SECONDS }),
+            cookieHeader(OAUTH_STATE_COOKIE, "", { maxAge: 0 })
+          ]
+        });
+        response.end();
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/api/config") {
         sendJson(response, 200, await loadConfig());
         return;
@@ -350,7 +677,8 @@ function createServer(client) {
 
       if (request.method === "GET" && url.pathname === "/api/discord/options") {
         assertAdmin(request);
-        sendJson(response, 200, await getGuildOptions(client));
+        const settings = await discordSettings();
+        sendJson(response, 200, await getGuildOptions(client, settings.guildId));
         return;
       }
 

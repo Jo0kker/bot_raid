@@ -62,7 +62,8 @@ Il utilise:
 ```env
 DATABASE_URL=postgres://gw_events_test:gw_events_test_password@localhost:5433/gw_events_test
 WEB_PORT=3001
-WEB_ADMIN_TOKEN=test-admin-token
+PUBLIC_BASE_URL=http://localhost:3001
+WEB_SESSION_SECRET=test-session-secret-change-me
 ```
 
 Le fichier [.env.test](.env.test) contient ces credentials de test. Renseigne seulement les valeurs Discord de test avant de lancer:
@@ -89,9 +90,50 @@ npm run db:test:down
 npm start
 ```
 
-Le panel est disponible sur `http://localhost:3000`. Le token demandé par le panel est `WEB_ADMIN_TOKEN`.
+Le panel est disponible sur `http://localhost:3000`.
 
-Le panel demande le token admin à la connexion puis le garde dans `sessionStorage` du navigateur pour la session courante. Une fois connecté, il charge automatiquement les events, salons Discord et rôles Discord disponibles.
+Le panel utilise OAuth Discord. Le serveur cible et les rôles admin sont enregistrés en base depuis le bloc `Setup serveur` du panel.
+
+## OAuth Discord
+
+Dans le Discord Developer Portal, ajoute cette Redirect URI:
+
+```text
+https://ton-domaine.example/auth/discord/callback
+```
+
+En local, utilise:
+
+```text
+http://localhost:3000/auth/discord/callback
+```
+
+Scopes utilisés pour la connexion admin:
+
+- `identify`
+- `guilds.members.read`
+
+Scopes utilisés pour le bouton "Ajouter à Discord":
+
+- `bot`
+- `applications.commands`
+
+Variables à configurer:
+
+```env
+DISCORD_CLIENT_ID=...
+DISCORD_CLIENT_SECRET=...
+PUBLIC_BASE_URL=https://ton-domaine.example
+WEB_SESSION_SECRET=une-valeur-longue-aleatoire
+WEB_SETUP_PASSWORD=mot-de-passe-pour-configurer-le-serveur
+```
+
+Après déploiement:
+
+1. Ouvre le panel.
+2. Clique `Ajouter à Discord` et choisis le serveur.
+3. Dans `Setup serveur`, saisis `WEB_SETUP_PASSWORD`, l'ID du serveur Discord et les IDs des rôles admin.
+4. Clique `Connexion Discord`.
 
 ## Leader Discord
 

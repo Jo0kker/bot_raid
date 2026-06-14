@@ -12,6 +12,10 @@ const DEFAULT_CONFIG = {
     durationMinutes: 120,
     lateToleranceMinutes: 15
   },
+  discord: {
+    guildId: "",
+    adminRoleIds: []
+  },
   difficulties: ["Normal", "Hard mode", "CM", "Training", "Progress"],
   signupStates: [
     { id: "bench", emoji: "🪑", label: "Bench" },

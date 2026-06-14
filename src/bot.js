@@ -31,7 +31,7 @@ async function publishEvent(client, event) {
   } catch (error) {
     if (error.code === 50001) {
       throw new Error(
-        "Discord refuse l'accès au salon configuré. Vérifie que DISCORD_EVENT_CHANNEL_ID est l'ID du bon salon, que le bot est invité sur ce serveur, et qu'il a les permissions Voir le salon / Envoyer des messages / Intégrer des liens."
+        "Discord refuse l'accès au salon configuré. Vérifie que le salon choisi est sur le serveur configuré, que le bot y est invité, et qu'il a les permissions Voir le salon / Envoyer des messages / Intégrer des liens."
       );
     }
     throw error;
@@ -41,8 +41,7 @@ async function publishEvent(client, event) {
     throw new Error(`Salon Discord invalide ou non textuel: ${channelId}`);
   }
 
-  const guildId = process.env.DISCORD_GUILD_ID;
-  const guild = guildId ? await client.guilds.fetch(guildId) : channel.guild;
+  const guild = channel.guild;
   const me = guild?.members?.me || await guild?.members?.fetchMe?.();
   const permissions = channel.permissionsFor?.(me);
   if (
@@ -253,10 +252,9 @@ async function handleStateButton(client, interaction) {
   await notifySignupWebhook(updated, signupForUser(updated, interaction.user.id), "state-selected");
 }
 
-async function getGuildOptions(client) {
-  const guildId = process.env.DISCORD_GUILD_ID;
+async function getGuildOptions(client, guildId) {
   if (!guildId) {
-    throw new Error("DISCORD_GUILD_ID est manquant.");
+    throw new Error("Aucun serveur Discord configuré. Configure le serveur cible dans le setup.");
   }
 
   const guild = await client.guilds.fetch(guildId);

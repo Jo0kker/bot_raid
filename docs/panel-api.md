@@ -4,13 +4,36 @@ Cette API sert de contrat entre le bot Discord GW Events et un futur panel admin
 
 ## Authentification
 
-Les routes admin utilisent le header:
+Le panel utilise OAuth Discord. Les routes admin lisent la session HTTP-only `gw_events_session`, créée par:
+
+- `GET /auth/discord/login`
+- `GET /auth/discord/callback`
+
+Le login OAuth demande les scopes Discord:
+
+- `identify`
+- `guilds.members.read`
+
+L'utilisateur doit appartenir au serveur configuré en base (`app_config.value.discord.guildId`) et posséder un rôle listé dans `app_config.value.discord.adminRoleIds`.
+
+Le setup initial se fait avec:
+
+```http
+POST /api/setup/discord
+Content-Type: application/json
+
+{
+  "password": "WEB_SETUP_PASSWORD",
+  "guildId": "id_serveur_discord",
+  "adminRoleIds": "role_id_1,role_id_2"
+}
+```
+
+Le header suivant reste accepté uniquement comme secours technique/API:
 
 ```http
 X-Admin-Token: valeur_de_WEB_ADMIN_TOKEN
 ```
-
-La valeur vient du `.env` du bot.
 
 ## Configuration
 
@@ -47,7 +70,7 @@ Le payload est le JSON complet de configuration.
 
 ### `GET /api/discord/options`
 
-Retourne les salons textuels et roles Discord du serveur configure par `DISCORD_GUILD_ID`.
+Retourne les salons textuels et roles Discord du serveur configuré en base via le setup.
 
 ```http
 GET /api/discord/options

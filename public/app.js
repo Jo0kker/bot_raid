@@ -1,5 +1,5 @@
 const state = {
-  adminToken: sessionStorage.getItem("gwEventsAdminToken") || "",
+  user: null,
   config: null,
   discordOptions: {
     channels: [],
@@ -22,24 +22,8 @@ const state = {
 const byId = (id) => document.getElementById(id);
 const DEFAULT_EMOJIS = ["🛡️", "💚", "✨", "⚔️", "🪁", "🔧", "🌿", "🔥", "⏳", "⚡", "🩸", "💀", "🧊", "🏹", "🔮", "🐾", "🤖", "🧪", "🪄", "🎯", "🪑", "🕘", "⚖️", "🚫"];
 
-function adminToken() {
-  return state.adminToken || byId("adminToken").value.trim();
-}
-
 function headers(extra = {}) {
-  return {
-    "X-Admin-Token": adminToken(),
-    ...extra
-  };
-}
-
-function setAdminToken(token) {
-  state.adminToken = token.trim();
-  if (state.adminToken) {
-    sessionStorage.setItem("gwEventsAdminToken", state.adminToken);
-  } else {
-    sessionStorage.removeItem("gwEventsAdminToken");
-  }
+  return { ...extra };
 }
 
 function setAuthenticated(authenticated) {
@@ -51,7 +35,7 @@ function setAuthenticated(authenticated) {
 }
 
 function renderTabs() {
-  const authenticated = Boolean(state.adminToken);
+  const authenticated = Boolean(state.user);
   for (const button of document.querySelectorAll("[data-tab]")) {
     button.classList.toggle("active", button.dataset.tab === state.activeTab);
   }
@@ -176,7 +160,7 @@ function renderDiscordOptions() {
   const hiddenChannels = textChannels.length - usableChannels.length;
   byId("discordOptionsStatus").textContent = state.discordOptions.channels.length > 0
     ? `${usableChannels.length} salons utilisables. ${hiddenChannels} salons masqués faute de permissions bot.`
-    : "Aucun salon récupéré pour l'instant. Recharge Discord ou vérifie DISCORD_GUILD_ID.";
+    : "Aucun salon récupéré pour l'instant. Recharge Discord ou configure le serveur dans le setup.";
 
   renderAllowedRoles();
 }
@@ -775,12 +759,47 @@ async function loadConfig() {
   renderConfig();
 }
 
-async function authenticate(token) {
-  setAdminToken(token);
+async function loadAuthState() {
+  const response = await fetch("/api/auth/me");
+  const result = await response.json();
+  state.user = result.user;
+  byId("inviteBotLink").href = result.inviteUrl || "/auth/discord/invite";
+  byId("discordLoginLink").href = result.loginUrl || "/auth/discord/login";
+  byId("setupGuildId").value = result.guildId || "";
+  byId("authHelp").textContent = result.adminRolesConfigured
+    ? "OAuth Discord prêt. Scope login requis: identify + guilds.members.read."
+    : "Configure le serveur et les rôles admin avant la première connexion.";
+  setAuthenticated(Boolean(result.authenticated));
+  return result;
+}
+
+async function saveDiscordSetup() {
+  const response = await fetch("/api/setup/discord", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      password: byId("setupPassword").value,
+      guildId: byId("setupGuildId").value,
+      adminRoleIds: byId("setupAdminRoleIds").value
+    })
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    byId("status").textContent = `Erreur setup: ${result.error}`;
+    return;
+  }
+
+  state.config = result.config;
+  byId("setupPassword").value = "";
+  byId("status").textContent = "Serveur Discord enregistré. Tu peux te connecter avec Discord.";
+  await loadAuthState();
+}
+
+async function authenticate() {
   const response = await fetch("/api/events", { headers: headers() });
   const result = await response.json();
   if (!response.ok) {
-    setAdminToken("");
+    state.user = null;
     throw new Error(result.error || "Connexion impossible.");
   }
 
@@ -864,11 +883,6 @@ function renderEvents(events) {
 }
 
 async function loadEvents() {
-  if (!adminToken()) {
-    byId("status").textContent = "Connecte-toi pour lister les events.";
-    return;
-  }
-
   const response = await fetch("/api/events", { headers: headers() });
   const result = await response.json();
   if (!response.ok) {
@@ -880,11 +894,6 @@ async function loadEvents() {
 }
 
 async function loadDiscordOptions() {
-  if (!adminToken()) {
-    byId("status").textContent = "Connecte-toi pour charger Discord.";
-    return;
-  }
-
   const button = byId("loadDiscordOptions");
   button.disabled = true;
   button.textContent = "Chargement...";
@@ -911,11 +920,6 @@ async function loadDiscordOptions() {
 }
 
 async function saveConfig(useVisualEditors = true) {
-  if (!adminToken()) {
-    byId("status").textContent = "Connecte-toi pour sauvegarder la config.";
-    return;
-  }
-
   if (useVisualEditors) {
     readConfigEditors();
   }
@@ -1242,6 +1246,7 @@ byId("newEmojiValue").addEventListener("keydown", (event) => {
     event.target.value = "";
   }
 });
+byId("saveDiscordSetup").addEventListener("click", saveDiscordSetup);
 byId("closeTemplateCreateModal").addEventListener("click", closeTemplateCreateModal);
 byId("cancelTemplateCreate").addEventListener("click", closeTemplateCreateModal);
 byId("templateCreateForm").addEventListener("submit", createTemplateFromModal);
@@ -1279,24 +1284,10 @@ byId("eventForm").elements.leaderUserId.addEventListener("input", (event) => {
   }, 250);
 });
 byId("logoutAdmin").addEventListener("click", () => {
-  setAdminToken("");
-  byId("adminToken").value = "";
+  fetch("/api/auth/logout", { method: "POST" }).finally(() => {});
+  state.user = null;
   setAuthenticated(false);
-  byId("status").textContent = "";
-});
-
-byId("loginForm").addEventListener("submit", async (event) => {
-  event.preventDefault();
-  try {
-    byId("status").textContent = "Connexion...";
-    await authenticate(byId("adminToken").value);
-    if (!byId("status").textContent.startsWith("Connecté.")) {
-      byId("status").textContent = "Connecté.";
-    }
-  } catch (error) {
-    setAuthenticated(false);
-    byId("status").textContent = `Erreur: ${error.message}`;
-  }
+  byId("status").textContent = "Déconnecté.";
 });
 
 byId("eventForm").addEventListener("submit", async (event) => {
@@ -1334,16 +1325,19 @@ byId("eventForm").addEventListener("submit", async (event) => {
 
 loadConfig()
   .then(async () => {
-    if (state.adminToken) {
-      byId("adminToken").value = state.adminToken;
+    const auth = await loadAuthState();
+    if (auth.authenticated) {
       try {
-        await authenticate(state.adminToken);
+        await authenticate();
+        const name = auth.user?.globalName || auth.user?.username || "Discord";
+        if (!byId("status").textContent.startsWith("Connecté.")) {
+          byId("status").textContent = `Connecté: ${name}`;
+        }
       } catch (error) {
+        state.user = null;
         setAuthenticated(false);
         byId("status").textContent = `Session expirée: ${error.message}`;
       }
-    } else {
-      setAuthenticated(false);
     }
   })
   .catch((error) => {
