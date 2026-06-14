@@ -1,5 +1,7 @@
 const state = {
   user: null,
+  guilds: [],
+  guildId: "",
   config: null,
   discordOptions: {
     channels: [],
@@ -31,6 +33,7 @@ function setAuthenticated(authenticated) {
   byId("eventForm").classList.toggle("hidden", !authenticated);
   byId("eventsPanel").classList.toggle("hidden", !authenticated);
   byId("logoutAdmin").classList.toggle("hidden", !authenticated);
+  byId("guildSelect").classList.toggle("hidden", !authenticated || state.guilds.length <= 1);
   renderTabs();
 }
 
@@ -784,6 +787,9 @@ async function loadAuthState() {
   const response = await fetch("/api/auth/me");
   const result = await response.json();
   state.user = result.user;
+  state.guilds = result.guilds || [];
+  state.guildId = result.guildId || "";
+  renderGuildSelect();
   byId("inviteBotLink").href = result.inviteUrl || "/auth/discord/invite";
   byId("discordLoginLink").href = result.loginUrl || "/auth/discord/login";
   byId("authHelp").textContent = result.setupConfigured
@@ -791,6 +797,14 @@ async function loadAuthState() {
     : "Commence par Ajouter à Discord: l'installation enregistrera automatiquement le serveur et ton compte comme admin.";
   setAuthenticated(Boolean(result.authenticated));
   return result;
+}
+
+function renderGuildSelect() {
+  const select = byId("guildSelect");
+  select.innerHTML = (state.guilds || [])
+    .map((guild) => `<option value="${guild.guildId}">${guild.name || guild.guildId}</option>`)
+    .join("");
+  select.value = state.guildId || "";
 }
 
 async function authenticate() {
@@ -1288,8 +1302,27 @@ byId("eventForm").elements.leaderUserId.addEventListener("input", (event) => {
 byId("logoutAdmin").addEventListener("click", () => {
   fetch("/api/auth/logout", { method: "POST" }).finally(() => {});
   state.user = null;
+  state.guilds = [];
+  state.guildId = "";
   setAuthenticated(false);
   byId("status").textContent = "Déconnecté.";
+});
+byId("guildSelect").addEventListener("change", async (event) => {
+  const response = await fetch("/api/auth/guild", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers() },
+    body: JSON.stringify({ guildId: event.target.value })
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    byId("status").textContent = `Erreur: ${result.error}`;
+    return;
+  }
+  state.guildId = result.guildId;
+  state.discordOptions = { channels: [], roles: [], emojis: [] };
+  renderDiscordOptions();
+  await loadEvents();
+  byId("status").textContent = `Serveur actif: ${result.guildName || result.guildId}`;
 });
 byId("publicationModeSelect").addEventListener("change", updatePublicationModeFields);
 

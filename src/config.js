@@ -103,6 +103,16 @@ async function ensureSchema() {
           updated_at timestamptz not null default now()
         );
 
+        create table if not exists app_guilds (
+          guild_id text primary key,
+          name text not null default '',
+          icon text,
+          admin_user_ids jsonb not null default '[]'::jsonb,
+          admin_role_ids jsonb not null default '[]'::jsonb,
+          created_at timestamptz not null default now(),
+          updated_at timestamptz not null default now()
+        );
+
         create table if not exists app_templates (
           id text primary key,
           label text not null,
@@ -191,6 +201,21 @@ async function migrateStructuredConfigFromAppConfig() {
     }
 
     const configWithoutTemplates = { ...currentConfig };
+    if (currentConfig.discord?.guildId) {
+      await upsertGuildPg(client, {
+        guildId: currentConfig.discord.guildId,
+        adminUserIds: currentConfig.discord.adminUserIds || [],
+        adminRoleIds: currentConfig.discord.adminRoleIds || []
+      });
+      await client.query(
+        "update events set guild_id = $1 where guild_id is null",
+        [currentConfig.discord.guildId]
+      ).catch((error) => {
+        if (error.code !== "42P01") {
+          throw error;
+        }
+      });
+    }
     delete configWithoutTemplates.roles;
     delete configWithoutTemplates.signupOptions;
     delete configWithoutTemplates.templates;
@@ -206,6 +231,76 @@ async function migrateStructuredConfigFromAppConfig() {
   } finally {
     client.release();
   }
+}
+
+async function upsertGuildPg(client, guild) {
+  const guildId = String(guild.guildId || guild.id || "").trim();
+  if (!guildId) {
+    return;
+  }
+
+  await client.query(
+    `
+      insert into app_guilds (
+        guild_id, name, icon, admin_user_ids, admin_role_ids, updated_at
+      )
+      values ($1, $2, $3, $4, $5, now())
+      on conflict (guild_id) do update set
+        name = coalesce(nullif(excluded.name, ''), app_guilds.name),
+        icon = coalesce(excluded.icon, app_guilds.icon),
+        admin_user_ids = excluded.admin_user_ids,
+        admin_role_ids = excluded.admin_role_ids,
+        updated_at = excluded.updated_at
+    `,
+    [
+      guildId,
+      guild.name || "",
+      guild.icon || null,
+      JSON.stringify(guild.adminUserIds || []),
+      JSON.stringify(guild.adminRoleIds || [])
+    ]
+  );
+}
+
+function rowToGuild(row) {
+  return {
+    guildId: row.guild_id,
+    name: row.name || "",
+    icon: row.icon || null,
+    adminUserIds: row.admin_user_ids || [],
+    adminRoleIds: row.admin_role_ids || []
+  };
+}
+
+async function registerGuild(guild) {
+  await ensureSchema();
+  const client = await getPool().connect();
+  try {
+    await upsertGuildPg(client, guild);
+  } finally {
+    client.release();
+  }
+}
+
+async function getGuild(guildId) {
+  await ensureSchema();
+  const result = await getPool().query("select * from app_guilds where guild_id = $1", [guildId]);
+  return result.rows[0] ? rowToGuild(result.rows[0]) : null;
+}
+
+async function listGuilds() {
+  await ensureSchema();
+  const result = await getPool().query("select * from app_guilds order by name asc, guild_id asc");
+  return result.rows.map(rowToGuild);
+}
+
+async function listGuildsForUser(userId) {
+  await ensureSchema();
+  const result = await getPool().query(
+    "select * from app_guilds where admin_user_ids ? $1 order by name asc, guild_id asc",
+    [String(userId)]
+  );
+  return result.rows.map(rowToGuild);
 }
 
 function splitConfig(config) {
@@ -511,4 +606,13 @@ function validateConfig(config) {
   }
 }
 
-module.exports = { configBackend, loadConfig, saveConfig, validateConfig };
+module.exports = {
+  configBackend,
+  getGuild,
+  listGuilds,
+  listGuildsForUser,
+  loadConfig,
+  registerGuild,
+  saveConfig,
+  validateConfig
+};

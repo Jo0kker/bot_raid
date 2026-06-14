@@ -39,6 +39,7 @@ async function ensureSchema() {
     schemaReady = getPool().query(`
       create table if not exists events (
         id uuid primary key,
+        guild_id text,
         title text not null,
         template_id text not null default 'custom',
         event_date date not null,
@@ -79,7 +80,9 @@ async function ensureSchema() {
       );
 
       create index if not exists events_timestamp_seconds_idx on events(timestamp_seconds desc);
+      create index if not exists events_guild_id_timestamp_seconds_idx on events(guild_id, timestamp_seconds desc);
       create index if not exists signups_event_id_idx on signups(event_id);
+      alter table events add column if not exists guild_id text;
       alter table events add column if not exists leader_user_id text;
       alter table events add column if not exists publication_mode text not null default 'channel';
       alter table events add column if not exists channel_id text;
@@ -103,6 +106,7 @@ async function initializeStorage() {
 function rowToEvent(row, signups = []) {
   return {
     id: row.id,
+    guildId: row.guild_id,
     title: row.title,
     templateId: row.template_id,
     date: row.event_date instanceof Date ? row.event_date.toISOString().slice(0, 10) : String(row.event_date),
@@ -144,9 +148,11 @@ function signupRowToSignup(row) {
   };
 }
 
-async function readEventsPg() {
+async function readEventsPg(guildId) {
   await ensureSchema();
-  const result = await getPool().query("select * from events order by timestamp_seconds desc");
+  const result = guildId
+    ? await getPool().query("select * from events where guild_id = $1 order by timestamp_seconds desc", [guildId])
+    : await getPool().query("select * from events order by timestamp_seconds desc");
   return result.rows.map((row) => rowToEvent(row, []));
 }
 
@@ -173,12 +179,13 @@ async function writeEventPg(client, event) {
   await client.query(
     `
       insert into events (
-        id, title, template_id, event_date, event_time, timezone, timestamp_seconds,
+        id, guild_id, title, template_id, event_date, event_time, timezone, timestamp_seconds,
         difficulty, leader, leader_user_id, description, image_url, publication_mode, channel_id, category_id, roles, signup_options, links,
         allowed_role_ids, discord, status, created_at, updated_at
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
       on conflict (id) do update set
+        guild_id = excluded.guild_id,
         title = excluded.title,
         template_id = excluded.template_id,
         event_date = excluded.event_date,
@@ -203,6 +210,7 @@ async function writeEventPg(client, event) {
     `,
     [
       event.id,
+      event.guildId || null,
       event.title,
       event.templateId || "custom",
       event.date,
@@ -334,8 +342,8 @@ async function getEvent(eventId) {
   return getEventPg(eventId);
 }
 
-async function readEvents() {
-  return readEventsPg();
+async function readEvents(guildId) {
+  return readEventsPg(guildId);
 }
 
 module.exports = {

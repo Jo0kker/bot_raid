@@ -3,7 +3,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { PermissionFlagsBits } = require("discord.js");
-const { loadConfig, saveConfig } = require("./config");
+const { getGuild, listGuilds, listGuildsForUser, loadConfig, registerGuild, saveConfig } = require("./config");
 const { createEvent, deleteEvent, getEvent, readEvents, updateEvent } = require("./storage");
 const { deleteEventMessage, getGuildOptions, publishEvent } = require("./bot");
 
@@ -48,6 +48,16 @@ function assertAdmin(request) {
     error.status = 401;
     throw error;
   }
+}
+
+function assertGuildSession(request) {
+  const session = assertAdmin(request);
+  if (!session.guildId) {
+    const error = new Error("Aucun serveur Discord sélectionné pour cette session.");
+    error.status = 403;
+    throw error;
+  }
+  return session;
 }
 
 function parseCookies(request) {
@@ -149,15 +159,16 @@ function requiredOAuthEnv() {
 }
 
 async function discordSettings() {
-  const config = await loadConfig();
-  return {
-    guildId: config.discord?.guildId || "",
-    adminRoleIds: Array.isArray(config.discord?.adminRoleIds) ? config.discord.adminRoleIds : [],
-    adminUserIds: Array.isArray(config.discord?.adminUserIds) ? config.discord.adminUserIds : []
-  };
+  const guilds = await listGuilds();
+  const guild = guilds[0];
+  return guild ? {
+    guildId: guild.guildId,
+    adminRoleIds: guild.adminRoleIds,
+    adminUserIds: guild.adminUserIds
+  } : { guildId: "", adminRoleIds: [], adminUserIds: [] };
 }
 
-async function registerInstalledGuild(guildId, userId) {
+async function registerInstalledGuild(guildId, userId, guildDetails = {}) {
   const normalizedGuildId = normalizeDiscordId(guildId);
   const normalizedUserId = normalizeDiscordId(userId);
   if (!normalizedGuildId || !normalizedUserId) {
@@ -166,15 +177,14 @@ async function registerInstalledGuild(guildId, userId) {
     throw error;
   }
 
-  const config = await loadConfig();
-  const currentAdminUserIds = Array.isArray(config.discord?.adminUserIds) ? config.discord.adminUserIds : [];
-  config.discord = {
-    ...(config.discord || {}),
+  const current = await getGuild(normalizedGuildId);
+  await registerGuild({
     guildId: normalizedGuildId,
-    adminRoleIds: Array.isArray(config.discord?.adminRoleIds) ? config.discord.adminRoleIds : [],
-    adminUserIds: [...new Set([...currentAdminUserIds, normalizedUserId])]
-  };
-  return saveConfig(config);
+    name: guildDetails.name || current?.name || "",
+    icon: guildDetails.icon || current?.icon || null,
+    adminRoleIds: current?.adminRoleIds || [],
+    adminUserIds: [...new Set([...(current?.adminUserIds || []), normalizedUserId])]
+  });
 }
 
 function discordLoginUrl(request, state) {
@@ -183,7 +193,7 @@ function discordLoginUrl(request, state) {
     client_id: process.env.DISCORD_CLIENT_ID,
     redirect_uri: oauthRedirectUri(request, "/auth/discord/callback"),
     response_type: "code",
-    scope: "identify guilds.members.read",
+    scope: "identify guilds guilds.members.read",
     state,
     prompt: "none"
   });
@@ -251,30 +261,46 @@ async function exchangeDiscordCode(request, code, redirectUri = oauthRedirectUri
 async function createOAuthSession(request, code) {
   const token = await exchangeDiscordCode(request, code);
   const user = await discordApi("/users/@me", token.access_token);
-  const settings = await discordSettings();
-  if (!settings.guildId) {
+  const installedGuilds = await listGuilds();
+  if (installedGuilds.length === 0) {
     const error = new Error("Aucun serveur Discord n'est configuré. Utilise le setup avant de te connecter.");
     error.status = 403;
     throw error;
   }
 
-  const member = await discordApi(`/users/@me/guilds/${settings.guildId}/member`, token.access_token);
-  const allowedRoles = settings.adminRoleIds;
-  const allowedUsers = settings.adminUserIds;
-  const isAllowedUser = allowedUsers.includes(user.id);
-  const hasAllowedRole = member.roles?.some((roleId) => allowedRoles.includes(roleId));
-  if (!isAllowedUser && !hasAllowedRole) {
-    const error = new Error("Accès refusé: ton compte Discord n'a pas un rôle admin autorisé.");
-    error.status = 403;
-    throw error;
+  const userGuilds = await discordApi("/users/@me/guilds", token.access_token);
+  const userGuildIds = new Set(userGuilds.map((guild) => guild.id));
+  for (const guild of installedGuilds) {
+    if (!userGuildIds.has(guild.guildId)) {
+      continue;
+    }
+
+    const isAllowedUser = guild.adminUserIds.includes(user.id);
+    let member = { roles: [] };
+    try {
+      member = await discordApi(`/users/@me/guilds/${guild.guildId}/member`, token.access_token);
+    } catch (error) {
+      if (!isAllowedUser) {
+        continue;
+      }
+    }
+    const hasAllowedRole = member.roles?.some((roleId) => guild.adminRoleIds.includes(roleId));
+    if (isAllowedUser || hasAllowedRole) {
+      return {
+        userId: user.id,
+        username: user.username,
+        globalName: user.global_name,
+        avatar: user.avatar,
+        guildId: guild.guildId,
+        guildName: guild.name,
+        roles: member.roles || []
+      };
+    }
   }
-  return {
-    userId: user.id,
-    username: user.username,
-    globalName: user.global_name,
-    avatar: user.avatar,
-    roles: member.roles || []
-  };
+
+  const error = new Error("Accès refusé: ton compte Discord n'est admin sur aucun serveur installé.");
+  error.status = 403;
+  throw error;
 }
 
 function timeZoneOffsetMs(date, timeZone) {
@@ -347,7 +373,7 @@ function cleanDiscordName(value) {
     .toLowerCase();
 }
 
-async function resolveLeader(client, value) {
+async function resolveLeader(client, guildId, value) {
   const raw = String(value || "").trim();
   if (!raw) {
     return { leader: "à confirmer", leaderUserId: "" };
@@ -358,7 +384,6 @@ async function resolveLeader(client, value) {
     return { leader: "", leaderUserId: directId };
   }
 
-  const { guildId } = await discordSettings();
   if (!guildId) {
     return { leader: raw, leaderUserId: "" };
   }
@@ -369,7 +394,7 @@ async function resolveLeader(client, value) {
   }
 
   try {
-    const members = await searchGuildMembers(client, query, 10);
+    const members = await searchGuildMembers(client, guildId, query, 10);
     const exact = members.find((member) => member.searchNames.includes(query));
     const member = exact || members[0];
     if (member) {
@@ -392,8 +417,7 @@ async function resolveLeader(client, value) {
   throw error;
 }
 
-async function searchGuildMembers(client, queryValue, limit = 10) {
-  const { guildId } = await discordSettings();
+async function searchGuildMembers(client, guildId, queryValue, limit = 10) {
   if (!guildId) {
     const error = new Error("Aucun serveur Discord configuré.");
     error.status = 400;
@@ -455,8 +479,7 @@ function normalizeEmojiName(value) {
   return name;
 }
 
-async function createGuildEmojiFromUpload(client, input) {
-  const { guildId } = await discordSettings();
+async function createGuildEmojiFromUpload(client, guildId, input) {
   if (!guildId) {
     const error = new Error("Aucun serveur Discord configuré.");
     error.status = 400;
@@ -489,7 +512,7 @@ async function createGuildEmojiFromUpload(client, input) {
   };
 }
 
-async function normalizeEvent(input, config, client) {
+async function normalizeEvent(input, config, client, guildId) {
   if (!input.title || !input.date || !input.time) {
     const error = new Error("Titre, date et heure sont obligatoires.");
     error.status = 400;
@@ -504,7 +527,7 @@ async function normalizeEvent(input, config, client) {
     throw error;
   }
 
-  const leaderInfo = await resolveLeader(client, input.leaderUserId || input.leader);
+  const leaderInfo = await resolveLeader(client, guildId, input.leaderUserId || input.leader);
   const publicationMode = input.publicationMode === "category" ? "category" : "channel";
   const channelId = String(input.channelId || "").trim();
   const categoryId = String(input.categoryId || "").trim();
@@ -521,6 +544,7 @@ async function normalizeEvent(input, config, client) {
 
   return {
     title: String(input.title).trim(),
+    guildId,
     templateId: String(input.templateId || "custom"),
     date: String(input.date),
     time: String(input.time),
@@ -599,7 +623,14 @@ function createServer(client) {
 
       if (request.method === "GET" && url.pathname === "/api/auth/me") {
         const session = readSession(request);
-        const settings = await discordSettings();
+        const installedGuilds = await listGuilds();
+        const guilds = session ? await listGuildsForUser(session.userId) : [];
+        if (session?.guildId && !guilds.some((guild) => guild.guildId === session.guildId)) {
+          const currentGuild = await getGuild(session.guildId);
+          if (currentGuild) {
+            guilds.push(currentGuild);
+          }
+        }
         sendJson(response, 200, {
           authenticated: Boolean(session),
           user: session ? {
@@ -611,11 +642,13 @@ function createServer(client) {
           inviteUrl: "/auth/discord/invite",
           loginUrl: "/auth/discord/login",
           oauthConfigured: Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET),
-          setupConfigured: Boolean(settings.guildId),
-          guildId: settings.guildId,
-          adminRolesConfigured: settings.adminRoleIds.length > 0,
-          adminUsersConfigured: settings.adminUserIds.length > 0,
-          scopes: ["identify", "guilds.members.read"]
+          setupConfigured: installedGuilds.length > 0,
+          guildId: session?.guildId || guilds[0]?.guildId || "",
+          guildName: session?.guildName || guilds.find((guild) => guild.guildId === session?.guildId)?.name || "",
+          guilds: guilds.map((guild) => ({ guildId: guild.guildId, name: guild.name })),
+          adminRolesConfigured: guilds.some((guild) => guild.adminRoleIds.length > 0),
+          adminUsersConfigured: guilds.some((guild) => guild.adminUserIds.length > 0),
+          scopes: ["identify", "guilds", "guilds.members.read"]
         });
         return;
       }
@@ -626,6 +659,28 @@ function createServer(client) {
           "Set-Cookie": cookieHeader(SESSION_COOKIE, "", { maxAge: 0 })
         });
         response.end(JSON.stringify({ ok: true }));
+        return;
+      }
+
+      if (request.method === "POST" && url.pathname === "/api/auth/guild") {
+        const session = assertAdmin(request);
+        const body = await readBody(request);
+        const guildId = normalizeDiscordId(body.guildId);
+        const allowedGuilds = await listGuildsForUser(session.userId);
+        const guild = allowedGuilds.find((candidate) => candidate.guildId === guildId);
+        if (!guild) {
+          sendJson(response, 403, { error: "Serveur Discord non autorisé pour ton compte." });
+          return;
+        }
+        response.writeHead(200, {
+          "Content-Type": "application/json; charset=utf-8",
+          "Set-Cookie": cookieHeader(SESSION_COOKIE, createSessionCookie({
+            ...session,
+            guildId: guild.guildId,
+            guildName: guild.name
+          }), { maxAge: SESSION_MAX_AGE_SECONDS })
+        });
+        response.end(JSON.stringify({ ok: true, guildId: guild.guildId, guildName: guild.name }));
         return;
       }
 
@@ -640,8 +695,8 @@ function createServer(client) {
       }
 
       if (request.method === "GET" && url.pathname === "/auth/discord/login") {
-        const settings = await discordSettings();
-        if (!settings.guildId) {
+        const guilds = await listGuilds();
+        if (guilds.length === 0) {
           redirect(response, "/auth/discord/invite");
           return;
         }
@@ -693,13 +748,19 @@ function createServer(client) {
         }
         const token = await exchangeDiscordCode(request, code, oauthRedirectUri(request, "/auth/discord/install/callback"));
         const user = await discordApi("/users/@me", token.access_token);
-        await registerInstalledGuild(guildId, user.id);
+        const guild = await client.guilds.fetch(guildId).catch(() => null);
+        await registerInstalledGuild(guildId, user.id, {
+          name: guild?.name || "",
+          icon: guild?.icon || null
+        });
         const member = await discordApi(`/users/@me/guilds/${guildId}/member`, token.access_token);
         const session = {
           userId: user.id,
           username: user.username,
           globalName: user.global_name,
           avatar: user.avatar,
+          guildId,
+          guildName: guild?.name || "",
           roles: member.roles || []
         };
         response.writeHead(302, {
@@ -726,14 +787,13 @@ function createServer(client) {
       }
 
       if (request.method === "GET" && url.pathname === "/api/discord/options") {
-        assertAdmin(request);
-        const settings = await discordSettings();
-        sendJson(response, 200, await getGuildOptions(client, settings.guildId));
+        const session = assertGuildSession(request);
+        sendJson(response, 200, await getGuildOptions(client, session.guildId));
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/api/discord/members") {
-        assertAdmin(request);
+        const session = assertGuildSession(request);
         if (process.env.DISCORD_ENABLE_GUILD_MEMBERS_INTENT !== "true") {
           sendJson(response, 400, {
             error: "Recherche par pseudo désactivée. Utilise une mention/ID Discord ou active DISCORD_ENABLE_GUILD_MEMBERS_INTENT=true avec Server Members Intent."
@@ -741,19 +801,19 @@ function createServer(client) {
           return;
         }
         const query = url.searchParams.get("query") || "";
-        sendJson(response, 200, { members: await searchGuildMembers(client, query, 10) });
+        sendJson(response, 200, { members: await searchGuildMembers(client, session.guildId, query, 10) });
         return;
       }
 
       if (request.method === "POST" && url.pathname === "/api/discord/emojis") {
-        assertAdmin(request);
-        sendJson(response, 201, await createGuildEmojiFromUpload(client, await readBody(request)));
+        const session = assertGuildSession(request);
+        sendJson(response, 201, await createGuildEmojiFromUpload(client, session.guildId, await readBody(request)));
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/api/events") {
-        assertAdmin(request);
-        const events = await readEvents();
+        const session = assertGuildSession(request);
+        const events = await readEvents(session.guildId);
         sendJson(response, 200, {
           events: events
             .map(summarizeEvent)
@@ -764,9 +824,9 @@ function createServer(client) {
 
       const eventMatch = /^\/api\/events\/([^/]+)$/.exec(url.pathname);
       if (request.method === "GET" && eventMatch) {
-        assertAdmin(request);
+        const session = assertGuildSession(request);
         const event = await getEvent(eventMatch[1]);
-        if (!event) {
+        if (!event || event.guildId !== session.guildId) {
           sendJson(response, 404, { error: "Event introuvable." });
           return;
         }
@@ -776,22 +836,29 @@ function createServer(client) {
       }
 
       if (request.method === "PUT" && eventMatch) {
-        assertAdmin(request);
+        const session = assertGuildSession(request);
         const config = await loadConfig();
-        const normalized = await normalizeEvent(await readBody(request), config, client);
-        const updated = await updateEvent(eventMatch[1], (event) => ({
-          ...event,
-          ...normalized
-        }));
+        const normalized = await normalizeEvent(await readBody(request), config, client, session.guildId);
+        const updated = await updateEvent(eventMatch[1], (event) => {
+          if (event.guildId !== session.guildId) {
+            const error = new Error("Event introuvable.");
+            error.status = 404;
+            throw error;
+          }
+          return {
+            ...event,
+            ...normalized
+          };
+        });
         const published = await publishEvent(client, updated);
         sendJson(response, 200, { id: published.id, discordUrl: published.discord.url });
         return;
       }
 
       if (request.method === "DELETE" && eventMatch) {
-        assertAdmin(request);
+        const session = assertGuildSession(request);
         const event = await getEvent(eventMatch[1]);
-        if (!event) {
+        if (!event || event.guildId !== session.guildId) {
           sendJson(response, 404, { error: "Event introuvable." });
           return;
         }
@@ -803,9 +870,9 @@ function createServer(client) {
       }
 
       if (request.method === "POST" && url.pathname === "/api/events") {
-        assertAdmin(request);
+        const session = assertGuildSession(request);
         const config = await loadConfig();
-        const event = await createEvent(await normalizeEvent(await readBody(request), config, client));
+        const event = await createEvent(await normalizeEvent(await readBody(request), config, client, session.guildId));
         const published = await publishEvent(client, event);
         sendJson(response, 201, { id: published.id, discordUrl: published.discord.url });
         return;

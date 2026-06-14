@@ -62,7 +62,7 @@ async function assertPublishPermissions(channel) {
 }
 
 async function createEventChannel(client, config, event) {
-  const guildId = config.discord?.guildId;
+  const guildId = event.guildId;
   if (!guildId) {
     throw new Error("Aucun serveur Discord configuré.");
   }
