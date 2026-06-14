@@ -92,20 +92,22 @@ npm start
 
 Le panel est disponible sur `http://localhost:3000`.
 
-Le panel utilise OAuth Discord. Le serveur cible et les rôles admin sont enregistrés en base depuis le bloc `Setup serveur` du panel.
+Le panel utilise OAuth Discord. Le serveur cible est enregistré automatiquement en base quand tu cliques `Ajouter à Discord`; le compte qui installe le bot devient admin.
 
 ## OAuth Discord
 
-Dans le Discord Developer Portal, ajoute cette Redirect URI:
+Dans le Discord Developer Portal, ajoute ces Redirect URI:
 
 ```text
 https://ton-domaine.example/auth/discord/callback
+https://ton-domaine.example/auth/discord/install/callback
 ```
 
 En local, utilise:
 
 ```text
 http://localhost:3000/auth/discord/callback
+http://localhost:3000/auth/discord/install/callback
 ```
 
 Scopes utilisés pour la connexion admin:
@@ -117,6 +119,8 @@ Scopes utilisés pour le bouton "Ajouter à Discord":
 
 - `bot`
 - `applications.commands`
+- `identify`
+- `guilds.members.read`
 
 Variables à configurer:
 
@@ -125,15 +129,14 @@ DISCORD_CLIENT_ID=...
 DISCORD_CLIENT_SECRET=...
 PUBLIC_BASE_URL=https://ton-domaine.example
 WEB_SESSION_SECRET=une-valeur-longue-aleatoire
-WEB_SETUP_PASSWORD=mot-de-passe-pour-configurer-le-serveur
 ```
 
 Après déploiement:
 
 1. Ouvre le panel.
 2. Clique `Ajouter à Discord` et choisis le serveur.
-3. Dans `Setup serveur`, saisis `WEB_SETUP_PASSWORD`, l'ID du serveur Discord et les IDs des rôles admin.
-4. Clique `Connexion Discord`.
+3. Discord revient sur le site et enregistre automatiquement ce serveur.
+4. Le compte qui a installé le bot est connecté comme admin.
 
 ## Leader Discord
 

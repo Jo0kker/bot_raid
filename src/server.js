@@ -130,8 +130,14 @@ function baseUrl(request) {
   return `${proto}://${host}`;
 }
 
-function oauthRedirectUri(request) {
-  return process.env.DISCORD_OAUTH_REDIRECT_URI || `${baseUrl(request)}/auth/discord/callback`;
+function oauthRedirectUri(request, pathname = "/auth/discord/callback") {
+  if (pathname === "/auth/discord/callback" && process.env.DISCORD_OAUTH_REDIRECT_URI) {
+    return process.env.DISCORD_OAUTH_REDIRECT_URI;
+  }
+  if (pathname === "/auth/discord/install/callback" && process.env.DISCORD_INSTALL_REDIRECT_URI) {
+    return process.env.DISCORD_INSTALL_REDIRECT_URI;
+  }
+  return `${baseUrl(request)}${pathname}`;
 }
 
 function requiredOAuthEnv() {
@@ -142,54 +148,40 @@ function requiredOAuthEnv() {
   }
 }
 
-function normalizeCsvIds(value) {
-  return String(value || "")
-    .split(",")
-    .map((id) => id.trim())
-    .filter(Boolean);
-}
-
 async function discordSettings() {
   const config = await loadConfig();
   return {
     guildId: config.discord?.guildId || "",
-    adminRoleIds: Array.isArray(config.discord?.adminRoleIds) ? config.discord.adminRoleIds : []
+    adminRoleIds: Array.isArray(config.discord?.adminRoleIds) ? config.discord.adminRoleIds : [],
+    adminUserIds: Array.isArray(config.discord?.adminUserIds) ? config.discord.adminUserIds : []
   };
 }
 
-async function updateDiscordSettings(input) {
-  const guildId = normalizeDiscordId(input.guildId);
-  if (!guildId) {
-    const error = new Error("ID serveur Discord invalide.");
+async function registerInstalledGuild(guildId, userId) {
+  const normalizedGuildId = normalizeDiscordId(guildId);
+  const normalizedUserId = normalizeDiscordId(userId);
+  if (!normalizedGuildId || !normalizedUserId) {
+    const error = new Error("Installation Discord invalide: serveur ou utilisateur manquant.");
     error.status = 400;
     throw error;
   }
 
   const config = await loadConfig();
+  const currentAdminUserIds = Array.isArray(config.discord?.adminUserIds) ? config.discord.adminUserIds : [];
   config.discord = {
     ...(config.discord || {}),
-    guildId,
-    adminRoleIds: Array.isArray(input.adminRoleIds)
-      ? input.adminRoleIds.map(normalizeDiscordId).filter(Boolean)
-      : normalizeCsvIds(input.adminRoleIds).map(normalizeDiscordId).filter(Boolean)
+    guildId: normalizedGuildId,
+    adminRoleIds: Array.isArray(config.discord?.adminRoleIds) ? config.discord.adminRoleIds : [],
+    adminUserIds: [...new Set([...currentAdminUserIds, normalizedUserId])]
   };
   return saveConfig(config);
-}
-
-function assertSetupPassword(input) {
-  const expected = process.env.WEB_SETUP_PASSWORD || process.env.WEB_ADMIN_TOKEN;
-  if (!expected || input.password !== expected) {
-    const error = new Error("Mot de passe setup invalide.");
-    error.status = 401;
-    throw error;
-  }
 }
 
 function discordLoginUrl(request, state) {
   requiredOAuthEnv();
   const params = new URLSearchParams({
     client_id: process.env.DISCORD_CLIENT_ID,
-    redirect_uri: oauthRedirectUri(request),
+    redirect_uri: oauthRedirectUri(request, "/auth/discord/callback"),
     response_type: "code",
     scope: "identify guilds.members.read",
     state,
@@ -198,7 +190,8 @@ function discordLoginUrl(request, state) {
   return `https://discord.com/oauth2/authorize?${params}`;
 }
 
-function discordInviteUrl(request) {
+function discordInviteUrl(request, state) {
+  requiredOAuthEnv();
   const permissions = (
     PermissionFlagsBits.ViewChannel |
     PermissionFlagsBits.SendMessages |
@@ -208,9 +201,13 @@ function discordInviteUrl(request) {
     PermissionFlagsBits.ManageGuildExpressions
   ).toString();
   const params = new URLSearchParams({
-    client_id: process.env.DISCORD_CLIENT_ID || "",
+    client_id: process.env.DISCORD_CLIENT_ID,
     permissions,
-    scope: "bot applications.commands"
+    redirect_uri: oauthRedirectUri(request, "/auth/discord/install/callback"),
+    response_type: "code",
+    scope: "bot applications.commands identify guilds.members.read",
+    state,
+    prompt: "consent"
   });
   return `https://discord.com/oauth2/authorize?${params}`;
 }
@@ -228,7 +225,7 @@ async function discordApi(pathname, accessToken) {
   return payload;
 }
 
-async function exchangeDiscordCode(request, code) {
+async function exchangeDiscordCode(request, code, redirectUri = oauthRedirectUri(request, "/auth/discord/callback")) {
   requiredOAuthEnv();
   const response = await fetch("https://discord.com/api/v10/oauth2/token", {
     method: "POST",
@@ -238,7 +235,7 @@ async function exchangeDiscordCode(request, code) {
       client_secret: process.env.DISCORD_CLIENT_SECRET,
       grant_type: "authorization_code",
       code,
-      redirect_uri: oauthRedirectUri(request)
+      redirect_uri: redirectUri
     })
   });
   const payload = await response.json().catch(() => ({}));
@@ -262,14 +259,10 @@ async function createOAuthSession(request, code) {
 
   const member = await discordApi(`/users/@me/guilds/${settings.guildId}/member`, token.access_token);
   const allowedRoles = settings.adminRoleIds;
-  if (allowedRoles.length === 0) {
-    const error = new Error("Aucun rôle admin configuré. Utilise le setup serveur avant la connexion OAuth.");
-    error.status = 403;
-    throw error;
-  }
-
+  const allowedUsers = settings.adminUserIds;
+  const isAllowedUser = allowedUsers.includes(user.id);
   const hasAllowedRole = member.roles?.some((roleId) => allowedRoles.includes(roleId));
-  if (!hasAllowedRole) {
+  if (!isAllowedUser && !hasAllowedRole) {
     const error = new Error("Accès refusé: ton compte Discord n'a pas un rôle admin autorisé.");
     error.status = 403;
     throw error;
@@ -603,16 +596,9 @@ function createServer(client) {
           setupConfigured: Boolean(settings.guildId),
           guildId: settings.guildId,
           adminRolesConfigured: settings.adminRoleIds.length > 0,
+          adminUsersConfigured: settings.adminUserIds.length > 0,
           scopes: ["identify", "guilds.members.read"]
         });
-        return;
-      }
-
-      if (request.method === "POST" && url.pathname === "/api/setup/discord") {
-        const input = await readBody(request);
-        assertSetupPassword(input);
-        const config = await updateDiscordSettings(input);
-        sendJson(response, 200, { config, discord: config.discord });
         return;
       }
 
@@ -626,11 +612,21 @@ function createServer(client) {
       }
 
       if (request.method === "GET" && url.pathname === "/auth/discord/invite") {
-        redirect(response, discordInviteUrl(request));
+        const state = crypto.randomBytes(24).toString("base64url");
+        response.writeHead(302, {
+          Location: discordInviteUrl(request, state),
+          "Set-Cookie": cookieHeader(OAUTH_STATE_COOKIE, state, { maxAge: 10 * 60 })
+        });
+        response.end();
         return;
       }
 
       if (request.method === "GET" && url.pathname === "/auth/discord/login") {
+        const settings = await discordSettings();
+        if (!settings.guildId) {
+          redirect(response, "/auth/discord/invite");
+          return;
+        }
         const state = crypto.randomBytes(24).toString("base64url");
         response.writeHead(302, {
           Location: discordLoginUrl(request, state),
@@ -652,6 +648,42 @@ function createServer(client) {
           return;
         }
         const session = await createOAuthSession(request, code);
+        response.writeHead(302, {
+          Location: "/",
+          "Set-Cookie": [
+            cookieHeader(SESSION_COOKIE, createSessionCookie(session), { maxAge: SESSION_MAX_AGE_SECONDS }),
+            cookieHeader(OAUTH_STATE_COOKIE, "", { maxAge: 0 })
+          ]
+        });
+        response.end();
+        return;
+      }
+
+      if (request.method === "GET" && url.pathname === "/auth/discord/install/callback") {
+        const expectedState = parseCookies(request)[OAUTH_STATE_COOKIE];
+        if (!expectedState || expectedState !== url.searchParams.get("state")) {
+          sendJson(response, 400, { error: "État OAuth invalide." });
+          return;
+        }
+        const code = url.searchParams.get("code");
+        const guildId = url.searchParams.get("guild_id");
+        if (!code || !guildId) {
+          sendJson(response, 400, {
+            error: "Installation Discord incomplète. Vérifie que la Redirect URI d'installation est bien configurée dans le Developer Portal."
+          });
+          return;
+        }
+        const token = await exchangeDiscordCode(request, code, oauthRedirectUri(request, "/auth/discord/install/callback"));
+        const user = await discordApi("/users/@me", token.access_token);
+        await registerInstalledGuild(guildId, user.id);
+        const member = await discordApi(`/users/@me/guilds/${guildId}/member`, token.access_token);
+        const session = {
+          userId: user.id,
+          username: user.username,
+          globalName: user.global_name,
+          avatar: user.avatar,
+          roles: member.roles || []
+        };
         response.writeHead(302, {
           Location: "/",
           "Set-Cookie": [

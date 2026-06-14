@@ -8,26 +8,17 @@ Le panel utilise OAuth Discord. Les routes admin lisent la session HTTP-only `gw
 
 - `GET /auth/discord/login`
 - `GET /auth/discord/callback`
+- `GET /auth/discord/invite`
+- `GET /auth/discord/install/callback`
 
 Le login OAuth demande les scopes Discord:
 
 - `identify`
 - `guilds.members.read`
 
-L'utilisateur doit appartenir au serveur configuré en base (`app_config.value.discord.guildId`) et posséder un rôle listé dans `app_config.value.discord.adminRoleIds`.
+L'utilisateur doit appartenir au serveur configuré en base (`app_config.value.discord.guildId`) et être listé dans `app_config.value.discord.adminUserIds` ou posséder un rôle listé dans `app_config.value.discord.adminRoleIds`.
 
-Le setup initial se fait avec:
-
-```http
-POST /api/setup/discord
-Content-Type: application/json
-
-{
-  "password": "WEB_SETUP_PASSWORD",
-  "guildId": "id_serveur_discord",
-  "adminRoleIds": "role_id_1,role_id_2"
-}
-```
+Le setup initial se fait automatiquement via `GET /auth/discord/invite`: après l'installation Discord, le callback `/auth/discord/install/callback` enregistre le serveur et ajoute l'installateur dans `adminUserIds`.
 
 Le header suivant reste accepté uniquement comme secours technique/API:
 

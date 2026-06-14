@@ -14,7 +14,8 @@ const DEFAULT_CONFIG = {
   },
   discord: {
     guildId: "",
-    adminRoleIds: []
+    adminRoleIds: [],
+    adminUserIds: []
   },
   difficulties: ["Normal", "Hard mode", "CM", "Training", "Progress"],
   signupStates: [

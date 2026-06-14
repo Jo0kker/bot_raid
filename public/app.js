@@ -765,34 +765,11 @@ async function loadAuthState() {
   state.user = result.user;
   byId("inviteBotLink").href = result.inviteUrl || "/auth/discord/invite";
   byId("discordLoginLink").href = result.loginUrl || "/auth/discord/login";
-  byId("setupGuildId").value = result.guildId || "";
-  byId("authHelp").textContent = result.adminRolesConfigured
-    ? "OAuth Discord prêt. Scope login requis: identify + guilds.members.read."
-    : "Configure le serveur et les rôles admin avant la première connexion.";
+  byId("authHelp").textContent = result.setupConfigured
+    ? "Serveur Discord configuré. Connecte-toi avec le compte installateur ou un rôle admin configuré."
+    : "Commence par Ajouter à Discord: l'installation enregistrera automatiquement le serveur et ton compte comme admin.";
   setAuthenticated(Boolean(result.authenticated));
   return result;
-}
-
-async function saveDiscordSetup() {
-  const response = await fetch("/api/setup/discord", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      password: byId("setupPassword").value,
-      guildId: byId("setupGuildId").value,
-      adminRoleIds: byId("setupAdminRoleIds").value
-    })
-  });
-  const result = await response.json();
-  if (!response.ok) {
-    byId("status").textContent = `Erreur setup: ${result.error}`;
-    return;
-  }
-
-  state.config = result.config;
-  byId("setupPassword").value = "";
-  byId("status").textContent = "Serveur Discord enregistré. Tu peux te connecter avec Discord.";
-  await loadAuthState();
 }
 
 async function authenticate() {
@@ -1246,7 +1223,6 @@ byId("newEmojiValue").addEventListener("keydown", (event) => {
     event.target.value = "";
   }
 });
-byId("saveDiscordSetup").addEventListener("click", saveDiscordSetup);
 byId("closeTemplateCreateModal").addEventListener("click", closeTemplateCreateModal);
 byId("cancelTemplateCreate").addEventListener("click", closeTemplateCreateModal);
 byId("templateCreateForm").addEventListener("submit", createTemplateFromModal);
