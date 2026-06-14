@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GW Events Admin</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="toolbar">
+        <div>
+          <h1>GW Events</h1>
+          <p>Création rapide d'annonces Discord paramétrables.</p>
+        </div>
+        <div class="session-actions">
+          <span id="status"></span>
+          <button type="button" class="secondary hidden" id="logoutAdmin">Déconnexion</button>
+        </div>
+      </section>
+
+      <section class="panel" id="loginPanel">
+        <h2>Connexion admin</h2>
+        <form id="loginForm" class="login-form">
+          <label>
+            Token admin
+            <input id="adminToken" type="password" autocomplete="current-password" placeholder="WEB_ADMIN_TOKEN">
+          </label>
+          <button type="submit">Se connecter</button>
+        </form>
+      </section>
+
+      <form id="eventForm" class="layout hidden">
+        <nav class="tabs">
+          <button type="button" class="tab active" data-tab="eventsView">Events</button>
+          <button type="button" class="tab" data-tab="templatesView">Templates compo</button>
+          <button type="button" class="tab" data-tab="classesView">Rôles & classes</button>
+          <button type="button" class="tab" data-tab="emojisView">Emojis</button>
+          <button type="button" class="tab" data-tab="advancedConfigView">Config avancée</button>
+        </nav>
+
+        <div id="eventsView" class="tab-view">
+        <section class="panel">
+          <h2>Event</h2>
+          <div class="grid two">
+            <label>Titre <input name="title" required value="Raid du Dimanche 21h"></label>
+            <label>Template de composition <select name="templateId" id="templateSelect"></select></label>
+            <label>Date <input name="date" type="date" required></label>
+            <label>Heure <input name="time" type="time" required value="21:00"></label>
+            <label>Difficulté <select name="difficulty" id="difficultySelect"></select></label>
+            <label>Leader Discord <input name="leaderUserId" list="leaderSuggestions" placeholder="@pseudo, mention ou ID Discord"></label>
+            <datalist id="leaderSuggestions"></datalist>
+            <label>Salon Discord <select name="channelId" id="channelSelect"></select></label>
+          </div>
+          <p id="discordOptionsStatus" class="hint"></p>
+          <label>Description <textarea name="description" rows="4">N'oubliez pas de vous inscrire à l'event, merci &lt;3</textarea></label>
+          <label>Image URL <input name="imageUrl" placeholder="https://..."></label>
+          <div class="section-title compact-title">
+            <h3>Accès Discord</h3>
+            <button type="button" class="secondary" id="loadDiscordOptions">Rafraîchir salons/rôles</button>
+          </div>
+          <p class="hint">Laisse vide pour autoriser tout le monde. Coche un ou plusieurs rôles pour limiter l'inscription.</p>
+          <div id="allowedRolesEditor" class="role-picker"></div>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">
+            <h2>Composition</h2>
+            <button type="button" class="secondary" id="toggleCompositionEditor">Modifier la composition</button>
+          </div>
+          <p id="templateSummary" class="hint"></p>
+          <div id="compositionPreview" class="composition-preview"></div>
+          <div id="compositionEditor" class="hidden">
+            <div class="section-title compact-title">
+              <h3>Détail de la composition</h3>
+              <button type="button" id="addRole">Ajouter un rôle</button>
+            </div>
+            <div id="rolesEditor" class="roles"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Liens</h2>
+          <label>Liens JSON <textarea name="linksJson" id="linksJson" rows="5"></textarea></label>
+        </section>
+
+        <section class="actions">
+          <button type="submit" id="submitEvent">Créer l'annonce Discord</button>
+          <button type="button" class="secondary" id="resetForm">Nouvel event</button>
+        </section>
+        </div>
+      </form>
+
+      <section class="panel hidden tab-view" id="eventsPanel">
+        <div class="section-title">
+          <h2>Events existants</h2>
+          <button type="button" class="secondary" id="refreshEvents">Rafraîchir</button>
+        </div>
+        <div id="eventsList" class="events-list"></div>
+      </section>
+
+      <section class="panel hidden tab-view" id="templatesView">
+        <div class="section-title">
+          <h2>Templates de composition</h2>
+          <button type="button" class="secondary" id="saveTemplatesConfig">Sauvegarder</button>
+        </div>
+        <p class="hint">Un template définit directement la composition appliquée à un event: rôles et capacités.</p>
+        <div class="template-tools">
+          <input id="templateSearch" placeholder="Rechercher un template...">
+          <div id="templateTagFilters" class="tag-filters"></div>
+          <p id="templateFilterStatus" class="hint"></p>
+        </div>
+        <div id="templatesEditor" class="config-editor"></div>
+        <button type="button" class="secondary" id="addTemplate">Ajouter un template</button>
+      </section>
+
+      <div id="templateCreateModal" class="modal hidden" aria-hidden="true">
+        <div class="modal-panel">
+          <div class="section-title">
+            <h2>Nouveau template</h2>
+            <button type="button" class="secondary" id="closeTemplateCreateModal">Fermer</button>
+          </div>
+          <form id="templateCreateForm" class="modal-form">
+            <label>Nom du template <input name="label" placeholder="Raid 10 CM"></label>
+            <label>Jeu / tag <input name="game" placeholder="Guild Wars 2"></label>
+            <label>Copier depuis <select name="sourceTemplateId"></select></label>
+            <div class="modal-actions">
+              <button type="button" class="secondary" id="cancelTemplateCreate">Annuler</button>
+              <button type="submit">Créer</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <section class="panel hidden tab-view" id="classesView">
+        <div class="section-title">
+          <h2>Rôles & classes</h2>
+          <button type="button" class="secondary" id="saveClassesConfig">Sauvegarder</button>
+        </div>
+        <h3>Rôles event</h3>
+        <p class="hint">Ces rôles sont les groupes de composition: Heal, Tank, Support, DPS, etc.</p>
+        <div id="groupsEditor" class="config-editor"></div>
+        <button type="button" class="secondary" id="addGroup">Ajouter un rôle event</button>
+
+        <h3>Options / classes possibles</h3>
+        <p class="hint">Ces options sont le catalogue des choix d'inscription: Druide, Healbrand, Quickness, Power DPS, etc.</p>
+        <div id="classesEditor" class="config-editor"></div>
+        <button type="button" class="secondary" id="addClassOption">Ajouter une option</button>
+      </section>
+
+      <section class="panel hidden tab-view" id="emojisView">
+        <div class="section-title">
+          <h2>Emojis</h2>
+          <button type="button" class="secondary" id="saveEmojisConfig">Sauvegarder</button>
+        </div>
+        <p class="hint">Cette palette alimente les sélecteurs d'icônes des rôles, classes et templates.</p>
+        <div class="emoji-admin-tools">
+          <div class="inline-add">
+            <input id="newEmojiValue" placeholder="Coller un emoji ou <:nom:id>">
+            <button type="button" class="secondary" id="addEmojiToPalette">Ajouter</button>
+          </div>
+          <button type="button" class="secondary" id="refreshEmojiSources">Charger emojis serveur</button>
+        </div>
+        <div class="emoji-upload">
+          <input id="externalEmojiName" placeholder="Nom Discord, ex: chrono_tank">
+          <input id="externalEmojiFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+          <button type="button" id="createEmojiFromImage">Créer depuis image</button>
+        </div>
+        <p id="emojiUploadStatus" class="hint"></p>
+        <h3>Palette active</h3>
+        <div id="emojiPaletteEditor" class="emoji-admin-grid"></div>
+        <h3>Emojis serveur</h3>
+        <input id="serverEmojiSearch" placeholder="Rechercher un emoji serveur...">
+        <div id="serverEmojiCatalog" class="emoji-admin-grid"></div>
+      </section>
+
+      <section class="panel hidden tab-view" id="advancedConfigView">
+        <div class="section-title">
+          <h2>Configuration avancée</h2>
+          <button type="button" class="secondary" id="saveConfig">Sauvegarder</button>
+        </div>
+        <label>Config JSON <textarea id="configJson" rows="14"></textarea></label>
+      </section>
+
+      <div id="emojiPicker" class="emoji-picker hidden">
+        <div class="emoji-picker-panel">
+          <div class="section-title">
+            <h2>Choisir un emoji</h2>
+            <button type="button" class="secondary" id="closeEmojiPicker">Fermer</button>
+          </div>
+          <input id="emojiSearch" placeholder="Rechercher un emoji...">
+          <div id="emojiPickerList" class="emoji-picker-list"></div>
+        </div>
+      </div>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

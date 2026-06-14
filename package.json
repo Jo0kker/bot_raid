@@ -1,0 +1,25 @@
+{
+  "name": "gw-discord-event-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bot Discord configurable pour organiser des events Guild Wars / Guild Wars 2.",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "bot": "node src/bot.js",
+    "db:shell": "docker compose exec postgres psql -U gw_events -d gw_events",
+    "db:tables": "docker compose exec postgres psql -U gw_events -d gw_events -c \"\\dt\"",
+    "db:test": "docker compose -f docker-compose.test.yml up -d postgres-test",
+    "db:test:down": "docker compose -f docker-compose.test.yml down",
+    "start:test": "ENV_FILE=.env.test node src/index.js",
+    "start:test:win": "set ENV_FILE=.env.test&& node src/index.js",
+    "check": "node --check src/index.js && node --check src/bot.js && node --check src/server.js && node --check src/config.js && node --check src/storage.js && node --check src/discord/render.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "pg": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

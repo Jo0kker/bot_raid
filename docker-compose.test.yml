@@ -1,0 +1,21 @@
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: gw-events-postgres-test
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gw_events_test
+      POSTGRES_USER: gw_events_test
+      POSTGRES_PASSWORD: gw_events_test_password
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_test_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gw_events_test -d gw_events_test"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_test_data:
