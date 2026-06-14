@@ -20,7 +20,7 @@ function createDiscordClient() {
 
 async function publishEvent(client, event) {
   const config = await loadConfig();
-  const channelId = event.channelId || process.env.DISCORD_EVENT_CHANNEL_ID;
+  const channelId = event.channelId;
   if (!channelId) {
     throw new Error("Aucun salon Discord configuré pour cet event.");
   }

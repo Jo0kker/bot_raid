@@ -150,7 +150,7 @@ function renderDiscordOptions() {
   const textChannels = state.discordOptions.channels.filter((channel) => channel.isText);
   const usableChannels = textChannels.filter((channel) => channel.usableForEvents);
   byId("channelSelect").innerHTML = [
-    `<option value="">Salon par défaut (.env)</option>`,
+    `<option value="">Sélectionne un salon</option>`,
     ...usableChannels.map((channel) => {
       const label = channel.parentName ? `${channel.parentName} / #${channel.name}` : `#${channel.name}`;
       return `<option value="${channel.id}">${label}</option>`;

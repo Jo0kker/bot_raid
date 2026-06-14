@@ -504,6 +504,12 @@ async function normalizeEvent(input, config, client) {
   }
 
   const leaderInfo = await resolveLeader(client, input.leaderUserId || input.leader);
+  const channelId = String(input.channelId || "").trim();
+  if (!channelId) {
+    const error = new Error("Sélectionne un salon Discord avant de créer l'event.");
+    error.status = 400;
+    throw error;
+  }
 
   return {
     title: String(input.title).trim(),
@@ -517,7 +523,7 @@ async function normalizeEvent(input, config, client) {
     leaderUserId: leaderInfo.leaderUserId,
     description: String(input.description || ""),
     imageUrl: String(input.imageUrl || ""),
-    channelId: String(input.channelId || process.env.DISCORD_EVENT_CHANNEL_ID || "").trim(),
+    channelId,
     roles: Array.isArray(input.roles) ? input.roles : [],
     signupOptions: Array.isArray(input.signupOptions) ? input.signupOptions : config.signupOptions || [],
     links: Array.isArray(input.links) ? input.links : [],
