@@ -149,6 +149,8 @@ function renderDiscordOptions() {
   state.discordOptions.emojis = state.discordOptions.emojis || [];
   const textChannels = state.discordOptions.channels.filter((channel) => channel.isText);
   const usableChannels = textChannels.filter((channel) => channel.usableForEvents);
+  const categories = state.discordOptions.channels.filter((channel) => channel.isCategory);
+  const usableCategories = categories.filter((channel) => channel.usableForEventChannels);
   byId("channelSelect").innerHTML = [
     `<option value="">Sélectionne un salon</option>`,
     ...usableChannels.map((channel) => {
@@ -156,13 +158,32 @@ function renderDiscordOptions() {
       return `<option value="${channel.id}">${label}</option>`;
     })
   ].join("");
+  byId("categorySelect").innerHTML = [
+    `<option value="">Sélectionne une catégorie</option>`,
+    ...categories.map((category) => {
+      const suffix = category.usableForEventChannels ? "" : " (permission Gérer les salons manquante)";
+      const disabled = category.usableForEventChannels ? "" : " disabled";
+      return `<option value="${category.id}"${disabled}>${category.name}${suffix}</option>`;
+    })
+  ].join("");
 
   const hiddenChannels = textChannels.length - usableChannels.length;
+  const hiddenCategories = categories.length - usableCategories.length;
   byId("discordOptionsStatus").textContent = state.discordOptions.channels.length > 0
-    ? `${usableChannels.length} salons utilisables. ${hiddenChannels} salons masqués faute de permissions bot.`
+    ? `${usableChannels.length} salons utilisables, ${usableCategories.length} catégories utilisables. ${hiddenChannels + hiddenCategories} élément(s) masqué(s) faute de permissions bot.`
     : "Aucun salon récupéré pour l'instant. Recharge Discord ou configure le serveur dans le setup.";
 
+  updatePublicationModeFields();
   renderAllowedRoles();
+}
+
+function updatePublicationModeFields() {
+  const mode = byId("publicationModeSelect")?.value || "channel";
+  const channelMode = mode === "channel";
+  byId("channelField").classList.toggle("hidden", !channelMode);
+  byId("categoryField").classList.toggle("hidden", channelMode);
+  byId("channelSelect").required = channelMode;
+  byId("categorySelect").required = !channelMode;
 }
 
 function renderAllowedRoles() {
@@ -814,7 +835,10 @@ function fillForm(event) {
   form.elements.time.value = event.time || "";
   form.elements.difficulty.value = event.difficulty || "";
   form.elements.leaderUserId.value = event.leaderUserId ? `<@${event.leaderUserId}>` : (event.leader || "");
+  form.elements.publicationMode.value = event.publicationMode || "channel";
   form.elements.channelId.value = event.channelId || event.discord?.channelId || "";
+  form.elements.categoryId.value = event.categoryId || "";
+  updatePublicationModeFields();
   form.elements.description.value = event.description || "";
   form.elements.imageUrl.value = event.imageUrl || "";
   state.roles = event.roles || [];
@@ -892,7 +916,9 @@ async function loadDiscordOptions() {
   renderConfigEditors();
   const textChannels = state.discordOptions.channels.filter((channel) => channel.isText).length;
   const usableChannels = state.discordOptions.channels.filter((channel) => channel.usableForEvents).length;
-  byId("status").textContent = `${state.discordOptions.channels.length} salons, ${usableChannels}/${textChannels} salons texte utilisables, ${state.discordOptions.roles.length} rôles, ${state.discordOptions.emojis.length} emojis chargés.`;
+  const categories = state.discordOptions.channels.filter((channel) => channel.isCategory).length;
+  const usableCategories = state.discordOptions.channels.filter((channel) => channel.usableForEventChannels).length;
+  byId("status").textContent = `${usableChannels}/${textChannels} salons texte utilisables, ${usableCategories}/${categories} catégories utilisables, ${state.discordOptions.roles.length} rôles, ${state.discordOptions.emojis.length} emojis chargés.`;
   return state.discordOptions;
 }
 
@@ -1265,6 +1291,7 @@ byId("logoutAdmin").addEventListener("click", () => {
   setAuthenticated(false);
   byId("status").textContent = "Déconnecté.";
 });
+byId("publicationModeSelect").addEventListener("change", updatePublicationModeFields);
 
 byId("eventForm").addEventListener("submit", async (event) => {
   event.preventDefault();

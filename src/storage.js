@@ -50,7 +50,9 @@ async function ensureSchema() {
         leader_user_id text,
         description text not null default '',
         image_url text not null default '',
+        publication_mode text not null default 'channel',
         channel_id text,
+        category_id text,
         roles jsonb not null default '[]'::jsonb,
         signup_options jsonb not null default '[]'::jsonb,
         links jsonb not null default '[]'::jsonb,
@@ -79,7 +81,9 @@ async function ensureSchema() {
       create index if not exists events_timestamp_seconds_idx on events(timestamp_seconds desc);
       create index if not exists signups_event_id_idx on signups(event_id);
       alter table events add column if not exists leader_user_id text;
+      alter table events add column if not exists publication_mode text not null default 'channel';
       alter table events add column if not exists channel_id text;
+      alter table events add column if not exists category_id text;
       alter table events add column if not exists signup_options jsonb not null default '[]'::jsonb;
       alter table signups add column if not exists user_display_name text;
       alter table signups add column if not exists user_avatar_url text;
@@ -110,7 +114,9 @@ function rowToEvent(row, signups = []) {
     leaderUserId: row.leader_user_id,
     description: row.description,
     imageUrl: row.image_url,
+    publicationMode: row.publication_mode || "channel",
     channelId: row.channel_id,
+    categoryId: row.category_id,
     roles: row.roles || [],
     signupOptions: row.signup_options || [],
     links: row.links || [],
@@ -168,10 +174,10 @@ async function writeEventPg(client, event) {
     `
       insert into events (
         id, title, template_id, event_date, event_time, timezone, timestamp_seconds,
-        difficulty, leader, leader_user_id, description, image_url, channel_id, roles, signup_options, links,
+        difficulty, leader, leader_user_id, description, image_url, publication_mode, channel_id, category_id, roles, signup_options, links,
         allowed_role_ids, discord, status, created_at, updated_at
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
       on conflict (id) do update set
         title = excluded.title,
         template_id = excluded.template_id,
@@ -184,7 +190,9 @@ async function writeEventPg(client, event) {
         leader_user_id = excluded.leader_user_id,
         description = excluded.description,
         image_url = excluded.image_url,
+        publication_mode = excluded.publication_mode,
         channel_id = excluded.channel_id,
+        category_id = excluded.category_id,
         roles = excluded.roles,
         signup_options = excluded.signup_options,
         links = excluded.links,
@@ -206,7 +214,9 @@ async function writeEventPg(client, event) {
       event.leaderUserId || null,
       event.description || "",
       event.imageUrl || "",
+      event.publicationMode || "channel",
       event.channelId || null,
+      event.categoryId || null,
       JSON.stringify(event.roles || []),
       JSON.stringify(event.signupOptions || []),
       JSON.stringify(event.links || []),

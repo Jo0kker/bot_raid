@@ -198,6 +198,7 @@ function discordInviteUrl(request, state) {
     PermissionFlagsBits.EmbedLinks |
     PermissionFlagsBits.ReadMessageHistory |
     PermissionFlagsBits.UseExternalEmojis |
+    PermissionFlagsBits.ManageChannels |
     PermissionFlagsBits.ManageGuildExpressions
   ).toString();
   const params = new URLSearchParams({
@@ -504,9 +505,16 @@ async function normalizeEvent(input, config, client) {
   }
 
   const leaderInfo = await resolveLeader(client, input.leaderUserId || input.leader);
+  const publicationMode = input.publicationMode === "category" ? "category" : "channel";
   const channelId = String(input.channelId || "").trim();
-  if (!channelId) {
+  const categoryId = String(input.categoryId || "").trim();
+  if (publicationMode === "channel" && !channelId) {
     const error = new Error("Sélectionne un salon Discord avant de créer l'event.");
+    error.status = 400;
+    throw error;
+  }
+  if (publicationMode === "category" && !categoryId) {
+    const error = new Error("Sélectionne une catégorie Discord avant de créer l'event.");
     error.status = 400;
     throw error;
   }
@@ -523,7 +531,9 @@ async function normalizeEvent(input, config, client) {
     leaderUserId: leaderInfo.leaderUserId,
     description: String(input.description || ""),
     imageUrl: String(input.imageUrl || ""),
-    channelId,
+    publicationMode,
+    channelId: publicationMode === "channel" ? channelId : "",
+    categoryId: publicationMode === "category" ? categoryId : "",
     roles: Array.isArray(input.roles) ? input.roles : [],
     signupOptions: Array.isArray(input.signupOptions) ? input.signupOptions : config.signupOptions || [],
     links: Array.isArray(input.links) ? input.links : [],
@@ -546,7 +556,9 @@ function summarizeEvent(event) {
     leaderUserId: event.leaderUserId || "",
     status: event.status,
     discord: event.discord,
+    publicationMode: event.publicationMode || "channel",
     channelId: event.channelId || event.discord?.channelId || null,
+    categoryId: event.categoryId || "",
     signupOptions: event.signupOptions || [],
     allowedRoleIds: event.allowedRoleIds || [],
     signupCount: event.signups.filter((signup) => signup.state === "confirmed").length,
@@ -596,7 +608,7 @@ function createServer(client) {
             globalName: session.globalName,
             avatar: session.avatar
           } : null,
-          inviteUrl: discordInviteUrl(request),
+          inviteUrl: "/auth/discord/invite",
           loginUrl: "/auth/discord/login",
           oauthConfigured: Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET),
           setupConfigured: Boolean(settings.guildId),
@@ -645,7 +657,7 @@ function createServer(client) {
       if (request.method === "GET" && url.pathname === "/auth/discord/callback") {
         const expectedState = parseCookies(request)[OAUTH_STATE_COOKIE];
         if (!expectedState || expectedState !== url.searchParams.get("state")) {
-          sendJson(response, 400, { error: "État OAuth invalide." });
+          redirect(response, "/auth/discord/login");
           return;
         }
         const code = url.searchParams.get("code");
@@ -668,7 +680,7 @@ function createServer(client) {
       if (request.method === "GET" && url.pathname === "/auth/discord/install/callback") {
         const expectedState = parseCookies(request)[OAUTH_STATE_COOKIE];
         if (!expectedState || expectedState !== url.searchParams.get("state")) {
-          sendJson(response, 400, { error: "État OAuth invalide." });
+          redirect(response, "/auth/discord/invite");
           return;
         }
         const code = url.searchParams.get("code");
