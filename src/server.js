@@ -6,6 +6,7 @@ const { PermissionFlagsBits } = require("discord.js");
 const { getGuild, listGuilds, listGuildsForUser, loadConfig, registerGuild, saveConfig } = require("./config");
 const { createEvent, deleteEvent, getEvent, readEvents, updateEvent } = require("./storage");
 const { deleteEventMessage, getGuildOptions, publishEvent } = require("./bot");
+const { envFlag } = require("./utils/env");
 
 const PUBLIC_DIR = path.join(process.cwd(), "public");
 const SESSION_COOKIE = "gw_events_session";
@@ -794,9 +795,9 @@ function createServer(client) {
 
       if (request.method === "GET" && url.pathname === "/api/discord/members") {
         const session = assertGuildSession(request);
-        if (process.env.DISCORD_ENABLE_GUILD_MEMBERS_INTENT !== "true") {
+        if (!envFlag("DISCORD_ENABLE_GUILD_MEMBERS_INTENT")) {
           sendJson(response, 400, {
-            error: "Recherche par pseudo désactivée. Utilise une mention/ID Discord ou active DISCORD_ENABLE_GUILD_MEMBERS_INTENT=true avec Server Members Intent."
+            error: "Recherche par pseudo désactivée. Active Server Members Intent dans le portail Discord, ajoute DISCORD_ENABLE_GUILD_MEMBERS_INTENT=true dans l'environnement Dokploy, puis redémarre l'app."
           });
           return;
         }

@@ -26,4 +26,8 @@ function loadEnv(filePath = path.join(process.cwd(), process.env.ENV_FILE || ".e
   }
 }
 
-module.exports = { loadEnv };
+function envFlag(name) {
+  return ["1", "true", "yes", "on"].includes(String(process.env[name] || "").trim().toLowerCase());
+}
+
+module.exports = { envFlag, loadEnv };

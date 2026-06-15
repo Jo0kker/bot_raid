@@ -2,6 +2,7 @@ const { ChannelType, Client, GatewayIntentBits, Events, MessageFlags, Permission
 const { loadConfig } = require("./config");
 const { getEvent, updateEvent } = require("./storage");
 const { buildEventMessage } = require("./discord/render");
+const { envFlag } = require("./utils/env");
 
 function createDiscordClient() {
   const intents = [
@@ -9,7 +10,7 @@ function createDiscordClient() {
     GatewayIntentBits.GuildMessages
   ];
 
-  if (process.env.DISCORD_ENABLE_GUILD_MEMBERS_INTENT === "true") {
+  if (envFlag("DISCORD_ENABLE_GUILD_MEMBERS_INTENT")) {
     intents.push(GatewayIntentBits.GuildMembers);
   }
 
