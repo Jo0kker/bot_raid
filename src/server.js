@@ -375,7 +375,7 @@ function cleanDiscordName(value) {
 
 async function resolveLeader(client, guildId, value) {
   const raw = String(value || "").trim();
-  if (!raw) {
+  if (!raw || ["à confirmer", "a confirmer", "non défini", "non defini"].includes(cleanDiscordName(raw))) {
     return { leader: "à confirmer", leaderUserId: "" };
   }
 
@@ -863,7 +863,7 @@ function createServer(client) {
           return;
         }
 
-        await deleteEventMessage(client, event);
+        await deleteEventMessage(client, event, { deleteCreatedChannel: true });
         await deleteEvent(event.id);
         sendJson(response, 200, { deleted: true });
         return;

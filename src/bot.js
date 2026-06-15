@@ -164,17 +164,22 @@ async function publishEvent(client, event) {
   }));
 }
 
-async function deleteEventMessage(client, event) {
-  if (!event?.discord?.channelId || !event.discord.messageId) {
+async function deleteEventMessage(client, event, options = {}) {
+  if (!event?.discord?.channelId) {
     return;
   }
 
   try {
     const channel = await client.channels.fetch(event.discord.channelId);
-    const message = await channel.messages.fetch(event.discord.messageId);
-    await message.delete();
+    if (event.discord.messageId) {
+      const message = await channel.messages.fetch(event.discord.messageId);
+      await message.delete();
+    }
+    if (options.deleteCreatedChannel && event.discord.createdChannel) {
+      await channel.delete("Suppression de l'event associé");
+    }
   } catch (error) {
-    if ([10008, 50001, 50013].includes(error.code)) {
+    if ([10003, 10008, 50001, 50013].includes(error.code)) {
       return;
     }
     throw error;
