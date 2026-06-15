@@ -79,9 +79,6 @@ async function ensureSchema() {
         primary key (event_id, user_id)
       );
 
-      create index if not exists events_timestamp_seconds_idx on events(timestamp_seconds desc);
-      create index if not exists events_guild_id_timestamp_seconds_idx on events(guild_id, timestamp_seconds desc);
-      create index if not exists signups_event_id_idx on signups(event_id);
       alter table events add column if not exists guild_id text;
       alter table events add column if not exists leader_user_id text;
       alter table events add column if not exists publication_mode text not null default 'channel';
@@ -92,6 +89,9 @@ async function ensureSchema() {
       alter table signups add column if not exists user_avatar_url text;
       alter table signups add column if not exists signup_option_id text;
       alter table signups add column if not exists signup_option_label text;
+      create index if not exists events_timestamp_seconds_idx on events(timestamp_seconds desc);
+      create index if not exists events_guild_id_timestamp_seconds_idx on events(guild_id, timestamp_seconds desc);
+      create index if not exists signups_event_id_idx on signups(event_id);
     `);
   }
 
