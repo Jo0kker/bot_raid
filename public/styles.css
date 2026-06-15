@@ -522,6 +522,34 @@ textarea {
   margin: 16px 0;
 }
 
+.emoji-source-settings {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(280px, 0.8fr);
+  gap: 12px;
+  align-items: end;
+  border: 1px solid #333640;
+  border-radius: 6px;
+  background: #15161b;
+  padding: 12px;
+  margin-top: 14px;
+}
+
+.emoji-source-settings h3 {
+  margin: 0 0 4px;
+}
+
+.emoji-source-control {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.emoji-source-settings #emojiSourceStatus {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
 .emoji-upload {
   display: grid;
   grid-template-columns: minmax(180px, 0.8fr) minmax(220px, 1fr) auto;

@@ -168,6 +168,17 @@
           <button type="button" class="secondary" id="saveEmojisConfig">Sauvegarder</button>
         </div>
         <p class="hint">Cette palette alimente les sélecteurs d'icônes des rôles, classes et templates.</p>
+        <div class="emoji-source-settings">
+          <div>
+            <h3>Destination des nouveaux emojis</h3>
+            <p class="hint">Vide = serveur actif. Renseigne l'ID d'un serveur banque d'emojis où le bot est aussi présent.</p>
+          </div>
+          <div class="emoji-source-control">
+            <input id="emojiSourceGuildIdInput" inputmode="numeric" autocomplete="off" placeholder="ID serveur source">
+            <button type="button" class="secondary" id="saveEmojiSource">Sauvegarder source</button>
+          </div>
+          <p id="emojiSourceStatus" class="hint"></p>
+        </div>
         <div class="emoji-admin-tools">
           <div class="inline-add">
             <input id="newEmojiValue" placeholder="Coller un emoji ou <:nom:id>">
@@ -199,6 +210,9 @@
           <button type="button" class="secondary" id="reloadAdminsDiscordOptions">Rafraîchir rôles</button>
         </div>
         <div id="adminRolesEditor" class="role-picker"></div>
+        <h3>Serveur source d'emojis</h3>
+        <p class="hint">Optionnel. Vide = emojis du serveur actif. Renseigne l'ID d'un serveur banque d'emojis où le bot est aussi présent.</p>
+        <input id="emojiGuildIdInput" inputmode="numeric" autocomplete="off" placeholder="ID serveur Discord source">
         <h3>Utilisateurs admin par ID</h3>
         <p class="hint">Un ID Discord par ligne. L'installateur courant est conservé automatiquement pour éviter un verrouillage.</p>
         <textarea id="adminUsersInput" rows="5" placeholder="123456789012345678"></textarea>

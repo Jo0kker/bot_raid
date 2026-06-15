@@ -4,7 +4,8 @@ const state = {
   guildId: "",
   guildAdmins: {
     adminRoleIds: [],
-    adminUserIds: []
+    adminUserIds: [],
+    emojiGuildId: ""
   },
   config: null,
   discordOptions: {
@@ -92,9 +93,8 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/'/g, "&#39;");
 }
 
-function uniqueTemplateId(label) {
-  const base = slugify(label) || "nouveau_template";
-  const usedIds = new Set((state.config.templates || []).map((template) => template.id));
+function uniqueSlug(label, usedIds, fallback) {
+  const base = slugify(label) || fallback;
   if (!usedIds.has(base)) {
     return base;
   }
@@ -104,6 +104,30 @@ function uniqueTemplateId(label) {
     index += 1;
   }
   return `${base}_${index}`;
+}
+
+function uniqueTemplateId(label) {
+  return uniqueSlug(
+    label,
+    new Set((state.config.templates || []).map((template) => template.id)),
+    "nouveau_template"
+  );
+}
+
+function uniqueRoleId(label) {
+  return uniqueSlug(
+    label,
+    new Set((state.config.roles || []).map((role) => role.id)),
+    "nouveau_groupe"
+  );
+}
+
+function uniqueSignupOptionId(label) {
+  return uniqueSlug(
+    label,
+    new Set((state.config.signupOptions || []).map((option) => option.id)),
+    "nouvelle_option"
+  );
 }
 
 function templateSummary(template) {
@@ -239,6 +263,8 @@ function renderGuildAdmins() {
       .join("");
   }
   byId("adminUsersInput").value = (state.guildAdmins.adminUserIds || []).join("\n");
+  byId("emojiGuildIdInput").value = state.guildAdmins.emojiGuildId || "";
+  byId("emojiSourceGuildIdInput").value = state.guildAdmins.emojiGuildId || "";
 }
 
 function applyTemplate(templateId) {
@@ -502,8 +528,10 @@ async function createEmojiFromImage() {
   }
 
   button.disabled = true;
-  status.textContent = "Création de l'emoji Discord...";
+  status.textContent = "Sauvegarde de la destination emoji...";
   try {
+    await saveGuildSettings({ source: "emojis", silent: true });
+    status.textContent = "Création de l'emoji Discord...";
     const response = await fetch("/api/discord/emojis", {
       method: "POST",
       headers: headers({ "Content-Type": "application/json" }),
@@ -537,7 +565,14 @@ async function createEmojiFromImage() {
 }
 
 function renderEmojiAdmin() {
+  if (!state.config) {
+    return;
+  }
   const palette = state.config.emojiPalette?.length ? state.config.emojiPalette : [];
+  byId("emojiSourceGuildIdInput").value = state.guildAdmins.emojiGuildId || "";
+  byId("emojiSourceStatus").textContent = state.guildAdmins.emojiGuildId
+    ? `Les nouveaux emojis seront créés sur le serveur source ${state.guildAdmins.emojiGuildId}.`
+    : "Les nouveaux emojis seront créés sur le serveur actif.";
   byId("emojiPaletteEditor").innerHTML = palette.length
     ? palette.map((emoji, index) => `
       <div class="emoji-admin-item" data-emoji-palette-index="${index}">
@@ -559,7 +594,7 @@ function renderEmojiAdmin() {
       return `
         <button type="button" class="emoji-admin-item ${alreadyAdded ? "selected" : ""}" data-add-server-emoji="${escapeAttr(emoji.value)}">
           <span class="emoji-admin-preview">${renderEmojiPreview(emoji.value)}</span>
-          <span class="emoji-admin-label">:${escapeHtml(emoji.name)}:</span>
+          <span class="emoji-admin-label">:${escapeHtml(emoji.name)}:${emoji.external ? " · externe" : ""}</span>
         </button>
       `;
     }).join("")
@@ -746,32 +781,58 @@ function readConfigEditors() {
     ? paletteInputs.map((input) => input.value.trim()).filter(Boolean)
     : (state.config.emojiPalette?.length ? state.config.emojiPalette : [...DEFAULT_EMOJIS]);
 
-  state.config.roles = [...document.querySelectorAll("[data-group-index]")].map((row) => ({
-    id: row.querySelector("[data-group-field=id]").value.trim(),
-    label: row.querySelector("[data-group-field=label]").value.trim(),
-    emoji: row.querySelector("[data-group-field=emoji]").value.trim(),
-    defaultCapacity: Number(row.querySelector("[data-group-field=defaultCapacity]").value || 1)
-  })).filter((role) => role.label).map((role) => ({
-    id: role.id || slugify(role.label),
-    ...role
-  }));
+  const usedRoleIds = new Set();
+  state.config.roles = [...document.querySelectorAll("[data-group-index]")]
+    .map((row) => ({
+      id: row.querySelector("[data-group-field=id]").value.trim(),
+      label: row.querySelector("[data-group-field=label]").value.trim(),
+      emoji: row.querySelector("[data-group-field=emoji]").value.trim(),
+      defaultCapacity: Number(row.querySelector("[data-group-field=defaultCapacity]").value || 1)
+    }))
+    .filter((role) => role.label)
+    .map((role) => {
+      const preferredId = role.id || slugify(role.label);
+      const id = preferredId && !usedRoleIds.has(preferredId)
+        ? preferredId
+        : uniqueSlug(role.label, usedRoleIds, "nouveau_groupe");
+      usedRoleIds.add(id);
+      return { ...role, id };
+    });
 
-  state.config.signupOptions = [...document.querySelectorAll("[data-class-index]")].map((row) => ({
-    id: row.querySelector("[data-class-field=id]").value.trim(),
-    label: row.querySelector("[data-class-field=label]").value.trim(),
-    emoji: row.querySelector("[data-class-field=emoji]").value.trim(),
-    roleId: row.querySelector("[data-class-field=roleId]").value
-  })).filter((option) => option.label && option.roleId).map((option) => ({
-    id: option.id || slugify(option.label),
-    ...option
-  }));
+  const usedSignupOptionIds = new Set();
+  state.config.signupOptions = [...document.querySelectorAll("[data-class-index]")]
+    .map((row) => ({
+      id: row.querySelector("[data-class-field=id]").value.trim(),
+      label: row.querySelector("[data-class-field=label]").value.trim(),
+      emoji: row.querySelector("[data-class-field=emoji]").value.trim(),
+      roleId: row.querySelector("[data-class-field=roleId]").value
+    }))
+    .filter((option) => option.label && option.roleId)
+    .map((option) => {
+      const preferredId = option.id || slugify(option.label);
+      const id = preferredId && !usedSignupOptionIds.has(preferredId)
+        ? preferredId
+        : uniqueSlug(option.label, usedSignupOptionIds, "nouvelle_option");
+      usedSignupOptionIds.add(id);
+      return { ...option, id };
+    });
 
+  const templateNodes = [...document.querySelectorAll("[data-template-index]")];
+  const visibleTemplateIndexes = new Set(templateNodes.map((node) => Number(node.dataset.templateIndex)));
   const templates = [...state.config.templates];
-  for (const templateNode of document.querySelectorAll("[data-template-index]")) {
+  const usedTemplateIds = new Set(
+    templates
+      .map((template, index) => visibleTemplateIndexes.has(index) ? null : template?.id)
+      .filter(Boolean)
+  );
+  for (const templateNode of templateNodes) {
     const templateIndex = Number(templateNode.dataset.templateIndex);
+    const templateIdInput = templateNode.querySelector("[data-template-field=id]").value.trim();
+    const templateLabel = templateNode.querySelector("[data-template-field=label]").value.trim();
+    const usedTemplateOptionIds = new Set();
     const template = {
-      id: templateNode.querySelector("[data-template-field=id]").value.trim(),
-      label: templateNode.querySelector("[data-template-field=label]").value.trim(),
+      id: "",
+      label: templateLabel,
       game: templateNode.querySelector("[data-template-field=game]").value.trim(),
       roles: [...templateNode.querySelectorAll("[data-template-role-index]")].map((row) => ({
         roleId: row.querySelector("[data-template-role-field=roleId]").value,
@@ -782,13 +843,23 @@ function readConfigEditors() {
         label: row.querySelector("[data-template-option-field=label]").value.trim(),
         emoji: row.querySelector("[data-template-option-field=emoji]").value.trim(),
         roleId: row.querySelector("[data-template-option-field=roleId]").value
-      })).filter((option) => option.label && option.roleId).map((option) => ({
-        id: option.id || slugify(option.label),
-        ...option
       }))
+        .filter((option) => option.label && option.roleId)
+        .map((option) => {
+          const preferredId = option.id || slugify(option.label);
+          const id = preferredId && !usedTemplateOptionIds.has(preferredId)
+            ? preferredId
+            : uniqueSlug(option.label, usedTemplateOptionIds, "option");
+          usedTemplateOptionIds.add(id);
+          return { ...option, id };
+        })
     };
 
-    if (template.id && template.label) {
+    if (templateLabel) {
+      template.id = templateIdInput && !usedTemplateIds.has(templateIdInput)
+        ? templateIdInput
+        : uniqueSlug(templateLabel, usedTemplateIds, "nouveau_template");
+      usedTemplateIds.add(template.id);
       templates[templateIndex] = template;
     }
   }
@@ -979,34 +1050,60 @@ async function loadGuildAdmins() {
   }
   state.guildAdmins = {
     adminRoleIds: result.adminRoleIds || [],
-    adminUserIds: result.adminUserIds || []
+    adminUserIds: result.adminUserIds || [],
+    emojiGuildId: result.emojiGuildId || ""
   };
   renderGuildAdmins();
   return state.guildAdmins;
 }
 
-async function saveGuildAdmins() {
+function readGuildSettings(source = "admins") {
   const adminRoleIds = [...document.querySelectorAll("#adminRolesEditor input:checked")].map((input) => input.value);
   const adminUserIds = byId("adminUsersInput").value
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
+  const emojiGuildId = source === "emojis"
+    ? byId("emojiSourceGuildIdInput").value.trim()
+    : byId("emojiGuildIdInput").value.trim();
+  return { adminRoleIds, adminUserIds, emojiGuildId };
+}
+
+async function saveGuildSettings(options = {}) {
+  const source = options.source || "admins";
   const response = await fetch("/api/guild/admins", {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...headers() },
-    body: JSON.stringify({ adminRoleIds, adminUserIds })
+    body: JSON.stringify(readGuildSettings(source))
   });
   const result = await response.json();
   if (!response.ok) {
     byId("status").textContent = `Erreur: ${result.error}`;
-    return;
+    throw new Error(result.error || "Sauvegarde serveur impossible.");
   }
   state.guildAdmins = {
     adminRoleIds: result.adminRoleIds || [],
-    adminUserIds: result.adminUserIds || []
+    adminUserIds: result.adminUserIds || [],
+    emojiGuildId: result.emojiGuildId || ""
   };
   renderGuildAdmins();
-  byId("status").textContent = "Admins serveur sauvegardés.";
+  renderEmojiAdmin();
+  if (!options.silent) {
+    byId("status").textContent = source === "emojis" ? "Source emojis sauvegardée." : "Admins serveur sauvegardés.";
+  }
+  return state.guildAdmins;
+}
+
+async function saveGuildAdmins() {
+  return saveGuildSettings({ source: "admins" });
+}
+
+async function saveEmojiSource() {
+  try {
+    await saveGuildSettings({ source: "emojis" });
+  } catch (error) {
+    byId("emojiSourceStatus").textContent = `Erreur: ${error.message}`;
+  }
 }
 
 async function saveConfig(useVisualEditors = true) {
@@ -1334,6 +1431,7 @@ byId("saveConfig").addEventListener("click", () => saveConfig(false));
 byId("saveTemplatesConfig").addEventListener("click", () => saveConfig(true));
 byId("saveClassesConfig").addEventListener("click", () => saveConfig(true));
 byId("saveEmojisConfig").addEventListener("click", () => saveConfig(true));
+byId("saveEmojiSource").addEventListener("click", saveEmojiSource);
 byId("refreshEmojiSources").addEventListener("click", loadDiscordOptions);
 byId("serverEmojiSearch").addEventListener("input", renderEmojiAdmin);
 byId("addEmojiToPalette").addEventListener("click", () => {
@@ -1353,7 +1451,7 @@ byId("cancelTemplateCreate").addEventListener("click", closeTemplateCreateModal)
 byId("templateCreateForm").addEventListener("submit", createTemplateFromModal);
 byId("addGroup").addEventListener("click", () => {
   state.config.roles.push({
-    id: "nouveau_groupe",
+    id: uniqueRoleId("Nouveau groupe"),
     label: "Nouveau groupe",
     emoji: "",
     defaultCapacity: 1
@@ -1365,7 +1463,7 @@ byId("addClassOption").addEventListener("click", () => {
   const firstRole = state.config.roles[0];
   state.config.signupOptions = state.config.signupOptions || [];
   state.config.signupOptions.push({
-    id: "nouvelle_option",
+    id: uniqueSignupOptionId("Nouvelle option"),
     label: "Nouvelle option",
     emoji: "",
     roleId: firstRole?.id || ""
@@ -1389,7 +1487,7 @@ byId("logoutAdmin").addEventListener("click", () => {
   state.user = null;
   state.guilds = [];
   state.guildId = "";
-  state.guildAdmins = { adminRoleIds: [], adminUserIds: [] };
+  state.guildAdmins = { adminRoleIds: [], adminUserIds: [], emojiGuildId: "" };
   setAuthenticated(false);
   byId("status").textContent = "Déconnecté.";
 });
@@ -1406,7 +1504,7 @@ byId("guildSelect").addEventListener("change", async (event) => {
   }
   state.guildId = result.guildId;
   state.discordOptions = { channels: [], roles: [], emojis: [] };
-  state.guildAdmins = { adminRoleIds: [], adminUserIds: [] };
+  state.guildAdmins = { adminRoleIds: [], adminUserIds: [], emojiGuildId: "" };
   renderDiscordOptions();
   await loadEvents();
   try {

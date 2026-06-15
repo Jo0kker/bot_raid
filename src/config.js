@@ -107,6 +107,7 @@ async function ensureSchema() {
           guild_id text primary key,
           name text not null default '',
           icon text,
+          emoji_guild_id text not null default '',
           admin_user_ids jsonb not null default '[]'::jsonb,
           admin_role_ids jsonb not null default '[]'::jsonb,
           created_at timestamptz not null default now(),
@@ -153,6 +154,8 @@ async function ensureSchema() {
           created_at timestamptz not null default now(),
           updated_at timestamptz not null default now()
         );
+
+        alter table app_guilds add column if not exists emoji_guild_id text not null default '';
       `);
       await migrateStructuredConfigFromAppConfig();
     })();
@@ -238,16 +241,18 @@ async function upsertGuildPg(client, guild) {
   if (!guildId) {
     return;
   }
+  const hasEmojiGuildId = Object.hasOwn(guild, "emojiGuildId");
 
   await client.query(
     `
       insert into app_guilds (
-        guild_id, name, icon, admin_user_ids, admin_role_ids, updated_at
+        guild_id, name, icon, emoji_guild_id, admin_user_ids, admin_role_ids, updated_at
       )
-      values ($1, $2, $3, $4, $5, now())
+      values ($1, $2, $3, $4, $5, $6, now())
       on conflict (guild_id) do update set
         name = coalesce(nullif(excluded.name, ''), app_guilds.name),
         icon = coalesce(excluded.icon, app_guilds.icon),
+        emoji_guild_id = case when $7 then excluded.emoji_guild_id else app_guilds.emoji_guild_id end,
         admin_user_ids = excluded.admin_user_ids,
         admin_role_ids = excluded.admin_role_ids,
         updated_at = excluded.updated_at
@@ -256,8 +261,10 @@ async function upsertGuildPg(client, guild) {
       guildId,
       guild.name || "",
       guild.icon || null,
+      hasEmojiGuildId ? String(guild.emojiGuildId || "").trim() : "",
       JSON.stringify(guild.adminUserIds || []),
-      JSON.stringify(guild.adminRoleIds || [])
+      JSON.stringify(guild.adminRoleIds || []),
+      hasEmojiGuildId
     ]
   );
 }
@@ -267,6 +274,7 @@ function rowToGuild(row) {
     guildId: row.guild_id,
     name: row.name || "",
     icon: row.icon || null,
+    emojiGuildId: row.emoji_guild_id || "",
     adminUserIds: row.admin_user_ids || [],
     adminRoleIds: row.admin_role_ids || []
   };
@@ -584,6 +592,10 @@ function validateConfig(config) {
     throw new Error("La configuration doit contenir signupStates.");
   }
 
+  assertUniqueIds(config.roles, "rôles");
+  assertUniqueIds(config.signupOptions || [], "options d'inscription");
+  assertUniqueIds(config.templates, "templates");
+
   const roleIds = new Set(config.roles.map((role) => role.id));
   for (const option of config.signupOptions || []) {
     if (!roleIds.has(option.roleId)) {
@@ -603,6 +615,20 @@ function validateConfig(config) {
         throw new Error(`L'option ${option.id} du template ${template.id} référence un rôle inconnu: ${option.roleId}`);
       }
     }
+  }
+}
+
+function assertUniqueIds(items, label) {
+  const seen = new Set();
+  for (const item of items || []) {
+    const id = String(item?.id || "").trim();
+    if (!id) {
+      throw new Error(`Un élément ${label} n'a pas d'id.`);
+    }
+    if (seen.has(id)) {
+      throw new Error(`Id dupliqué dans ${label}: ${id}`);
+    }
+    seen.add(id);
   }
 }
 

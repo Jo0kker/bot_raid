@@ -1,5 +1,5 @@
 const { ChannelType, Client, GatewayIntentBits, Events, MessageFlags, PermissionFlagsBits, Routes } = require("discord.js");
-const { loadConfig } = require("./config");
+const { getGuild, loadConfig } = require("./config");
 const { getEvent, updateEvent } = require("./storage");
 const { buildEventMessage } = require("./discord/render");
 const { envFlag } = require("./utils/env");
@@ -72,10 +72,11 @@ async function assertPublishPermissions(channel) {
     (
       !permissions.has(PermissionFlagsBits.ViewChannel) ||
       !permissions.has(PermissionFlagsBits.SendMessages) ||
-      !permissions.has(PermissionFlagsBits.EmbedLinks)
+      !permissions.has(PermissionFlagsBits.EmbedLinks) ||
+      !permissions.has(PermissionFlagsBits.UseExternalEmojis)
     )
   ) {
-    throw new Error("Le bot n'a pas les permissions Voir le salon / Envoyer des messages / Intégrer des liens dans ce salon.");
+    throw new Error("Le bot n'a pas les permissions Voir le salon / Envoyer des messages / Intégrer des liens / Utiliser des emojis externes dans ce salon.");
   }
 }
 
@@ -405,6 +406,26 @@ async function getGuildOptions(client, guildId) {
   const fetchedChannels = await guild.channels.fetch();
   const roles = await guild.roles.fetch();
   const emojis = await guild.emojis.fetch();
+  let externalEmojis = [];
+  const configuredGuild = await getGuild(guildId);
+  const emojiGuildId = String(configuredGuild?.emojiGuildId || "").trim();
+  if (emojiGuildId && emojiGuildId !== guildId) {
+    const emojiGuild = await client.guilds.fetch(emojiGuildId).catch(() => null);
+    if (!emojiGuild) {
+      throw new Error("Le serveur source d'emojis est configuré, mais le bot n'a pas accès à ce serveur.");
+    }
+    const emojiGuildEmojis = await emojiGuild.emojis.fetch();
+    externalEmojis = [...emojiGuildEmojis.values()].map((emoji) => ({
+      id: emoji.id,
+      name: emoji.name,
+      animated: emoji.animated,
+      value: `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`,
+      url: emoji.imageURL(),
+      sourceGuildId: emojiGuild.id,
+      sourceGuildName: emojiGuild.name,
+      external: true
+    }));
+  }
   const me = guild.members.me || await guild.members.fetchMe();
   const eventChannelTypes = new Set([
     ChannelType.GuildText,
@@ -460,14 +481,20 @@ async function getGuildOptions(client, guildId) {
         position: role.position
       }))
       .sort((left, right) => right.position - left.position),
-    emojis: [...emojis.values()]
+    emojis: [
+      ...[...emojis.values()]
       .map((emoji) => ({
         id: emoji.id,
         name: emoji.name,
         animated: emoji.animated,
         value: `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`,
-        url: emoji.imageURL()
-      }))
+        url: emoji.imageURL(),
+        sourceGuildId: guild.id,
+        sourceGuildName: guild.name,
+        external: false
+      })),
+      ...externalEmojis
+    ]
       .sort((left, right) => left.name.localeCompare(right.name))
   };
 }

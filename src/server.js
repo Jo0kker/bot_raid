@@ -183,6 +183,7 @@ async function registerInstalledGuild(guildId, userId, guildDetails = {}) {
     guildId: normalizedGuildId,
     name: guildDetails.name || current?.name || "",
     icon: guildDetails.icon || current?.icon || null,
+    emojiGuildId: current?.emojiGuildId || "",
     adminRoleIds: current?.adminRoleIds || [],
     adminUserIds: [...new Set([...(current?.adminUserIds || []), normalizedUserId])]
   });
@@ -481,13 +482,20 @@ function normalizeEmojiName(value) {
 }
 
 async function createGuildEmojiFromUpload(client, guildId, input) {
-  if (!guildId) {
+  const configuredGuild = await getGuild(guildId);
+  const targetGuildId = String(configuredGuild?.emojiGuildId || guildId || "").trim();
+  if (!targetGuildId) {
     const error = new Error("Aucun serveur Discord configuré.");
     error.status = 400;
     throw error;
   }
 
-  const guild = await client.guilds.fetch(guildId);
+  const guild = await client.guilds.fetch(targetGuildId).catch(() => null);
+  if (!guild) {
+    const error = new Error("Serveur de création d'emoji introuvable. Vérifie le serveur source d'emojis configuré ou l'accès du bot à ce serveur.");
+    error.status = 400;
+    throw error;
+  }
   const emoji = await guild.emojis.create({
     attachment: parseEmojiImageDataUrl(input.imageDataUrl),
     name: normalizeEmojiName(input.name),
@@ -507,7 +515,10 @@ async function createGuildEmojiFromUpload(client, guildId, input) {
       name: emoji.name,
       animated: Boolean(emoji.animated),
       url: emoji.imageURL(),
-      value
+      value,
+      sourceGuildId: guild.id,
+      sourceGuildName: guild.name,
+      external: guild.id !== guildId
     },
     config
   };
@@ -802,7 +813,8 @@ function createServer(client) {
         sendJson(response, 200, {
           guildId: session.guildId,
           adminRoleIds: guild?.adminRoleIds || [],
-          adminUserIds: guild?.adminUserIds || []
+          adminUserIds: guild?.adminUserIds || [],
+          emojiGuildId: guild?.emojiGuildId || ""
         });
         return;
       }
@@ -817,10 +829,12 @@ function createServer(client) {
         const adminUserIds = Array.isArray(body.adminUserIds)
           ? body.adminUserIds.map(normalizeDiscordId).filter(Boolean)
           : [];
+        const emojiGuildId = normalizeDiscordId(body.emojiGuildId || "");
         await registerGuild({
           guildId: session.guildId,
           name: guild?.name || session.guildName || "",
           icon: guild?.icon || null,
+          emojiGuildId,
           adminRoleIds: [...new Set(adminRoleIds)],
           adminUserIds: [...new Set([...adminUserIds, session.userId])]
         });
@@ -828,7 +842,8 @@ function createServer(client) {
         sendJson(response, 200, {
           guildId: session.guildId,
           adminRoleIds: updatedGuild?.adminRoleIds || [],
-          adminUserIds: updatedGuild?.adminUserIds || []
+          adminUserIds: updatedGuild?.adminUserIds || [],
+          emojiGuildId: updatedGuild?.emojiGuildId || ""
         });
         return;
       }
