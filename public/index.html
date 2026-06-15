@@ -36,6 +36,7 @@
           <button type="button" class="tab" data-tab="templatesView">Templates compo</button>
           <button type="button" class="tab" data-tab="classesView">Rôles & classes</button>
           <button type="button" class="tab" data-tab="emojisView">Emojis</button>
+          <button type="button" class="tab" data-tab="adminsView">Admins serveur</button>
           <button type="button" class="tab" data-tab="advancedConfigView">Config avancée</button>
         </nav>
 
@@ -179,6 +180,22 @@
         <h3>Emojis serveur</h3>
         <input id="serverEmojiSearch" placeholder="Rechercher un emoji serveur...">
         <div id="serverEmojiCatalog" class="emoji-admin-grid"></div>
+      </section>
+
+      <section class="panel hidden tab-view" id="adminsView">
+        <div class="section-title">
+          <h2>Admins serveur</h2>
+          <button type="button" class="secondary" id="saveGuildAdmins">Sauvegarder</button>
+        </div>
+        <p class="hint">Les membres avec l'un de ces rôles peuvent se connecter au panel pour gérer les events du serveur actif.</p>
+        <div class="section-title compact-title">
+          <h3>Rôles Discord autorisés</h3>
+          <button type="button" class="secondary" id="reloadAdminsDiscordOptions">Rafraîchir rôles</button>
+        </div>
+        <div id="adminRolesEditor" class="role-picker"></div>
+        <h3>Utilisateurs admin par ID</h3>
+        <p class="hint">Un ID Discord par ligne. L'installateur courant est conservé automatiquement pour éviter un verrouillage.</p>
+        <textarea id="adminUsersInput" rows="5" placeholder="123456789012345678"></textarea>
       </section>
 
       <section class="panel hidden tab-view" id="advancedConfigView">

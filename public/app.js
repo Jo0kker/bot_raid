@@ -2,6 +2,10 @@ const state = {
   user: null,
   guilds: [],
   guildId: "",
+  guildAdmins: {
+    adminRoleIds: [],
+    adminUserIds: []
+  },
   config: null,
   discordOptions: {
     channels: [],
@@ -178,6 +182,7 @@ function renderDiscordOptions() {
 
   updatePublicationModeFields();
   renderAllowedRoles();
+  renderGuildAdmins();
 }
 
 function updatePublicationModeFields() {
@@ -206,6 +211,25 @@ function renderAllowedRoles() {
       </label>
     `)
     .join("");
+}
+
+function renderGuildAdmins() {
+  state.discordOptions.roles = state.discordOptions.roles || [];
+  const selected = new Set(state.guildAdmins.adminRoleIds || []);
+  if (state.discordOptions.roles.length === 0) {
+    byId("adminRolesEditor").innerHTML = `<p class="hint">Aucun rôle chargé. Clique sur “Rafraîchir rôles”.</p>`;
+  } else {
+    byId("adminRolesEditor").innerHTML = state.discordOptions.roles
+      .map((role) => `
+        <label class="role-choice">
+          <input type="checkbox" value="${role.id}" ${selected.has(role.id) ? "checked" : ""}>
+          <span class="role-dot" style="background:${role.color && role.color !== "#000000" ? role.color : "#6b7280"}"></span>
+          <span>${role.name}</span>
+        </label>
+      `)
+      .join("");
+  }
+  byId("adminUsersInput").value = (state.guildAdmins.adminUserIds || []).join("\n");
 }
 
 function applyTemplate(templateId) {
@@ -819,6 +843,7 @@ async function authenticate() {
   renderEvents(result.events || []);
   try {
     await loadDiscordOptions();
+    await loadGuildAdmins();
   } catch (error) {
     byId("status").textContent = `Connecté. Discord non chargé: ${error.message}`;
   }
@@ -934,6 +959,44 @@ async function loadDiscordOptions() {
   const usableCategories = state.discordOptions.channels.filter((channel) => channel.usableForEventChannels).length;
   byId("status").textContent = `${usableChannels}/${textChannels} salons texte utilisables, ${usableCategories}/${categories} catégories utilisables, ${state.discordOptions.roles.length} rôles, ${state.discordOptions.emojis.length} emojis chargés.`;
   return state.discordOptions;
+}
+
+async function loadGuildAdmins() {
+  const response = await fetch("/api/guild/admins", { headers: headers() });
+  const result = await response.json();
+  if (!response.ok) {
+    throw new Error(result.error || "Chargement des admins impossible.");
+  }
+  state.guildAdmins = {
+    adminRoleIds: result.adminRoleIds || [],
+    adminUserIds: result.adminUserIds || []
+  };
+  renderGuildAdmins();
+  return state.guildAdmins;
+}
+
+async function saveGuildAdmins() {
+  const adminRoleIds = [...document.querySelectorAll("#adminRolesEditor input:checked")].map((input) => input.value);
+  const adminUserIds = byId("adminUsersInput").value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const response = await fetch("/api/guild/admins", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...headers() },
+    body: JSON.stringify({ adminRoleIds, adminUserIds })
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    byId("status").textContent = `Erreur: ${result.error}`;
+    return;
+  }
+  state.guildAdmins = {
+    adminRoleIds: result.adminRoleIds || [],
+    adminUserIds: result.adminUserIds || []
+  };
+  renderGuildAdmins();
+  byId("status").textContent = "Admins serveur sauvegardés.";
 }
 
 async function saveConfig(useVisualEditors = true) {
@@ -1304,6 +1367,7 @@ byId("logoutAdmin").addEventListener("click", () => {
   state.user = null;
   state.guilds = [];
   state.guildId = "";
+  state.guildAdmins = { adminRoleIds: [], adminUserIds: [] };
   setAuthenticated(false);
   byId("status").textContent = "Déconnecté.";
 });
@@ -1320,10 +1384,27 @@ byId("guildSelect").addEventListener("change", async (event) => {
   }
   state.guildId = result.guildId;
   state.discordOptions = { channels: [], roles: [], emojis: [] };
+  state.guildAdmins = { adminRoleIds: [], adminUserIds: [] };
   renderDiscordOptions();
   await loadEvents();
+  try {
+    await loadDiscordOptions();
+    await loadGuildAdmins();
+  } catch (error) {
+    byId("status").textContent = `Serveur changé. Discord non chargé: ${error.message}`;
+    return;
+  }
   byId("status").textContent = `Serveur actif: ${result.guildName || result.guildId}`;
 });
+byId("reloadAdminsDiscordOptions").addEventListener("click", async () => {
+  try {
+    await loadDiscordOptions();
+    await loadGuildAdmins();
+  } catch (error) {
+    byId("status").textContent = `Erreur: ${error.message}`;
+  }
+});
+byId("saveGuildAdmins").addEventListener("click", saveGuildAdmins);
 byId("publicationModeSelect").addEventListener("change", updatePublicationModeFields);
 
 byId("eventForm").addEventListener("submit", async (event) => {

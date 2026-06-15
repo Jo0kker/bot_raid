@@ -793,6 +793,43 @@ function createServer(client) {
         return;
       }
 
+      if (request.method === "GET" && url.pathname === "/api/guild/admins") {
+        const session = assertGuildSession(request);
+        const guild = await getGuild(session.guildId);
+        sendJson(response, 200, {
+          guildId: session.guildId,
+          adminRoleIds: guild?.adminRoleIds || [],
+          adminUserIds: guild?.adminUserIds || []
+        });
+        return;
+      }
+
+      if (request.method === "PUT" && url.pathname === "/api/guild/admins") {
+        const session = assertGuildSession(request);
+        const body = await readBody(request);
+        const guild = await getGuild(session.guildId);
+        const adminRoleIds = Array.isArray(body.adminRoleIds)
+          ? body.adminRoleIds.map(normalizeDiscordId).filter(Boolean)
+          : [];
+        const adminUserIds = Array.isArray(body.adminUserIds)
+          ? body.adminUserIds.map(normalizeDiscordId).filter(Boolean)
+          : [];
+        await registerGuild({
+          guildId: session.guildId,
+          name: guild?.name || session.guildName || "",
+          icon: guild?.icon || null,
+          adminRoleIds: [...new Set(adminRoleIds)],
+          adminUserIds: [...new Set([...adminUserIds, session.userId])]
+        });
+        const updatedGuild = await getGuild(session.guildId);
+        sendJson(response, 200, {
+          guildId: session.guildId,
+          adminRoleIds: updatedGuild?.adminRoleIds || [],
+          adminUserIds: updatedGuild?.adminUserIds || []
+        });
+        return;
+      }
+
       if (request.method === "GET" && url.pathname === "/api/discord/members") {
         const session = assertGuildSession(request);
         if (!envFlag("DISCORD_ENABLE_GUILD_MEMBERS_INTENT")) {
