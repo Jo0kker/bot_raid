@@ -52,6 +52,7 @@ async function ensureSchema() {
         description text not null default '',
         image_url text not null default '',
         publication_mode text not null default 'channel',
+        channel_prefix text not null default '',
         channel_id text,
         category_id text,
         roles jsonb not null default '[]'::jsonb,
@@ -82,6 +83,7 @@ async function ensureSchema() {
       alter table events add column if not exists guild_id text;
       alter table events add column if not exists leader_user_id text;
       alter table events add column if not exists publication_mode text not null default 'channel';
+      alter table events add column if not exists channel_prefix text not null default '';
       alter table events add column if not exists channel_id text;
       alter table events add column if not exists category_id text;
       alter table events add column if not exists signup_options jsonb not null default '[]'::jsonb;
@@ -119,6 +121,7 @@ function rowToEvent(row, signups = []) {
     description: row.description,
     imageUrl: row.image_url,
     publicationMode: row.publication_mode || "channel",
+    channelPrefix: row.channel_prefix || "",
     channelId: row.channel_id,
     categoryId: row.category_id,
     roles: row.roles || [],
@@ -180,10 +183,10 @@ async function writeEventPg(client, event) {
     `
       insert into events (
         id, guild_id, title, template_id, event_date, event_time, timezone, timestamp_seconds,
-        difficulty, leader, leader_user_id, description, image_url, publication_mode, channel_id, category_id, roles, signup_options, links,
+        difficulty, leader, leader_user_id, description, image_url, publication_mode, channel_prefix, channel_id, category_id, roles, signup_options, links,
         allowed_role_ids, discord, status, created_at, updated_at
       )
-      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+      values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
       on conflict (id) do update set
         guild_id = excluded.guild_id,
         title = excluded.title,
@@ -198,6 +201,7 @@ async function writeEventPg(client, event) {
         description = excluded.description,
         image_url = excluded.image_url,
         publication_mode = excluded.publication_mode,
+        channel_prefix = excluded.channel_prefix,
         channel_id = excluded.channel_id,
         category_id = excluded.category_id,
         roles = excluded.roles,
@@ -223,6 +227,7 @@ async function writeEventPg(client, event) {
       event.description || "",
       event.imageUrl || "",
       event.publicationMode || "channel",
+      event.channelPrefix || "",
       event.channelId || null,
       event.categoryId || null,
       JSON.stringify(event.roles || []),

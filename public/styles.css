@@ -610,6 +610,33 @@ button.emoji-admin-item {
   font-size: 12px;
 }
 
+.channel-prefix-control {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-prefix-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.channel-prefix-chip {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid #333640;
+  border-radius: 6px;
+  background: #22242b;
+  color: #f0f1f5;
+  font-size: 18px;
+}
+
+.channel-prefix-chip:hover {
+  border-color: #3678d8;
+  background: #22344f;
+}
+
 .inline-add {
   display: flex;
   gap: 10px;

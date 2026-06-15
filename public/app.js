@@ -27,6 +27,7 @@ const state = {
 
 const byId = (id) => document.getElementById(id);
 const DEFAULT_EMOJIS = ["🛡️", "💚", "✨", "⚔️", "🪁", "🔧", "🌿", "🔥", "⏳", "⚡", "🩸", "💀", "🧊", "🏹", "🔮", "🐾", "🤖", "🧪", "🪄", "🎯", "🪑", "🕘", "⚖️", "🚫"];
+const CHANNEL_PREFIX_EMOJIS = ["🟢", "🟡", "🔵", "🔴", "🟣", "⚔️", "🛡️", "🔥", "🌿", "🎯", "⭐", "💀", "🧪", "🧊", "🏹"];
 
 function headers(extra = {}) {
   return { ...extra };
@@ -148,6 +149,13 @@ function renderConfig() {
   applyTemplate(templateSelect.value);
   renderDiscordOptions();
   renderConfigEditors();
+  renderChannelPrefixPresets();
+}
+
+function renderChannelPrefixPresets() {
+  byId("channelPrefixPresets").innerHTML = CHANNEL_PREFIX_EMOJIS
+    .map((emoji) => `<button type="button" class="channel-prefix-chip" data-channel-prefix-emoji="${escapeAttr(emoji)}">${emoji}</button>`)
+    .join("");
 }
 
 function renderDiscordOptions() {
@@ -190,6 +198,7 @@ function updatePublicationModeFields() {
   const channelMode = mode === "channel";
   byId("channelField").classList.toggle("hidden", !channelMode);
   byId("categoryField").classList.toggle("hidden", channelMode);
+  byId("channelPrefixField").classList.toggle("hidden", channelMode);
   byId("channelSelect").required = channelMode;
   byId("categorySelect").required = !channelMode;
 }
@@ -877,6 +886,7 @@ function fillForm(event) {
   form.elements.publicationMode.value = event.publicationMode || "channel";
   form.elements.channelId.value = event.channelId || event.discord?.channelId || "";
   form.elements.categoryId.value = event.categoryId || "";
+  form.elements.channelPrefix.value = event.channelPrefix || "";
   updatePublicationModeFields();
   form.elements.description.value = event.description || "";
   form.elements.imageUrl.value = event.imageUrl || "";
@@ -1157,6 +1167,18 @@ document.addEventListener("click", (event) => {
   const deleteEvent = event.target.dataset.deleteEvent;
   if (deleteEvent && confirm("Supprimer cet event et le message Discord associé ?")) {
     deleteExistingEvent(deleteEvent);
+  }
+
+  const channelPrefixEmoji = event.target.closest("[data-channel-prefix-emoji]");
+  if (channelPrefixEmoji) {
+    const input = byId("channelPrefixInput");
+    const emoji = channelPrefixEmoji.dataset.channelPrefixEmoji || "";
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.value = `${input.value.slice(0, start)}${emoji}${input.value.slice(end)}`;
+    input.focus();
+    input.setSelectionRange(start + emoji.length, start + emoji.length);
+    return;
   }
 
   const openEmojiPicker = event.target.closest("[data-open-emoji-picker]");

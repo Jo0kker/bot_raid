@@ -59,6 +59,12 @@
             </label>
             <label id="channelField">Salon Discord <select name="channelId" id="channelSelect" required></select></label>
             <label id="categoryField" class="hidden">Catégorie Discord <select name="categoryId" id="categorySelect"></select></label>
+            <label id="channelPrefixField" class="hidden">Préfixe salon
+              <div class="channel-prefix-control">
+                <input name="channelPrefix" id="channelPrefixInput" placeholder="🟢-gw2">
+                <div id="channelPrefixPresets" class="channel-prefix-presets"></div>
+              </div>
+            </label>
           </div>
           <p id="discordOptionsStatus" class="hint"></p>
           <label>Description <textarea name="description" rows="4">N'oubliez pas de vous inscrire à l'event, merci &lt;3</textarea></label>

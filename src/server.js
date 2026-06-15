@@ -530,6 +530,7 @@ async function normalizeEvent(input, config, client, guildId) {
 
   const leaderInfo = await resolveLeader(client, guildId, input.leaderUserId || input.leader);
   const publicationMode = input.publicationMode === "category" ? "category" : "channel";
+  const channelPrefix = String(input.channelPrefix || "").trim();
   const channelId = String(input.channelId || "").trim();
   const categoryId = String(input.categoryId || "").trim();
   if (publicationMode === "channel" && !channelId) {
@@ -557,6 +558,7 @@ async function normalizeEvent(input, config, client, guildId) {
     description: String(input.description || ""),
     imageUrl: String(input.imageUrl || ""),
     publicationMode,
+    channelPrefix: publicationMode === "category" ? channelPrefix : "",
     channelId: publicationMode === "channel" ? channelId : "",
     categoryId: publicationMode === "category" ? categoryId : "",
     roles: Array.isArray(input.roles) ? input.roles : [],
@@ -582,6 +584,7 @@ function summarizeEvent(event) {
     status: event.status,
     discord: event.discord,
     publicationMode: event.publicationMode || "channel",
+    channelPrefix: event.channelPrefix || "",
     channelId: event.channelId || event.discord?.channelId || null,
     categoryId: event.categoryId || "",
     signupOptions: event.signupOptions || [],

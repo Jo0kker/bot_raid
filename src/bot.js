@@ -19,14 +19,31 @@ function createDiscordClient() {
   });
 }
 
-function eventChannelName(event) {
-  return String(`${event.date || ""} ${event.title || "event"}`)
+function slugChannelPart(value) {
+  return String(value || "")
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 90) || "event";
+    .slice(0, 90);
+}
+
+function cleanChannelPrefix(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/<a?:\w{2,32}:\d{15,25}>/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 24);
+}
+
+function eventChannelName(event) {
+  const prefix = cleanChannelPrefix(event.channelPrefix || "");
+  const base = slugChannelPart(`${event.date || ""} ${event.title || "event"}`) || "event";
+  return [prefix, base].filter(Boolean).join("-").slice(0, 90) || "event";
 }
 
 async function fetchPublishChannel(client, channelId) {
