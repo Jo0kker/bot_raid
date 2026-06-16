@@ -1,4 +1,14 @@
-const { ChannelType, Client, GatewayIntentBits, Events, MessageFlags, PermissionFlagsBits, Routes } = require("discord.js");
+const {
+  ActionRowBuilder,
+  ChannelType,
+  Client,
+  GatewayIntentBits,
+  Events,
+  MessageFlags,
+  PermissionFlagsBits,
+  Routes,
+  StringSelectMenuBuilder
+} = require("discord.js");
 const { getGuild, loadConfig } = require("./config");
 const { getEvent, updateEvent } = require("./storage");
 const { buildEventMessage } = require("./discord/render");
@@ -312,6 +322,41 @@ function upsertSignup(event, user, patch) {
   };
 }
 
+function optionRoleIds(option) {
+  return Array.isArray(option?.roleIds) && option.roleIds.length
+    ? option.roleIds
+    : [option?.roleId].filter(Boolean);
+}
+
+function eventRoleById(event, roleId) {
+  return (event.roles || []).find((slot) => slot.roleId === roleId) || null;
+}
+
+function compatibleRoleIdsForOption(event, option) {
+  const openRoleIds = new Set((event.roles || []).map((slot) => slot.roleId));
+  const roleIds = optionRoleIds(option).filter((roleId) => openRoleIds.size === 0 || openRoleIds.has(roleId));
+  return roleIds.length ? roleIds : [option?.roleId].filter(Boolean);
+}
+
+function roleChoiceLabel(event, roleId) {
+  const role = eventRoleById(event, roleId);
+  return role?.label || roleId;
+}
+
+function roleChoiceEmoji(event, roleId) {
+  return eventRoleById(event, roleId)?.emoji || "";
+}
+
+function safeComponentEmoji(emoji) {
+  const value = String(emoji || "").trim();
+  if (!value) {
+    return undefined;
+  }
+  return /^<a?:\w{2,32}:\d{15,25}>$/.test(value) || /^\p{Extended_Pictographic}$/u.test(value)
+    ? value
+    : undefined;
+}
+
 async function acknowledgeInteraction(interaction) {
   if (interaction.deferred || interaction.replied) {
     return true;
@@ -329,8 +374,8 @@ async function acknowledgeInteraction(interaction) {
   }
 }
 
-async function respondToInteraction(interaction, content) {
-  const payload = { content };
+async function respondToInteraction(interaction, contentOrPayload) {
+  const payload = typeof contentOrPayload === "string" ? { content: contentOrPayload } : contentOrPayload;
   try {
     if (interaction.deferred || interaction.replied) {
       await interaction.editReply(payload);
@@ -346,6 +391,24 @@ async function respondToInteraction(interaction, content) {
   }
 }
 
+async function respondEventMissing(interaction, eventId) {
+  try {
+    await interaction.message?.edit?.({ components: [] });
+  } catch (error) {
+    if (![10003, 10008, 50001, 50013].includes(error.code)) {
+      console.warn(`Impossible de désactiver une annonce orpheline ${eventId}: ${error.message}`);
+    }
+  }
+  await respondToInteraction(
+    interaction,
+    "Event introuvable en base. Cette annonce Discord est orpheline: republie l'event depuis le panel."
+  );
+}
+
+function isMissingEventError(error) {
+  return /^Event introuvable:/.test(String(error?.message || ""));
+}
+
 async function handleRoleSelect(client, interaction) {
   const acknowledged = await acknowledgeInteraction(interaction);
   if (!acknowledged) {
@@ -358,21 +421,106 @@ async function handleRoleSelect(client, interaction) {
   if (!eventId || !selectedId) {
     throw new Error("Interaction d'inscription invalide. Republie l'annonce de l'event.");
   }
-  const updated = await updateEvent(eventId, (event) => {
-    assertSignupAllowed(interaction, event);
-    const signupOption = (event.signupOptions || []).find((option) => option.id === selectedId);
-    const roleId = signupOption?.roleId || selectedId;
-    return upsertSignup(event, interaction.user, {
-      roleId,
-      signupOptionId: signupOption?.id || null,
-      signupOptionLabel: signupOption?.label || null,
-      state: "confirmed",
-      member: interaction.member
+  const event = await getEvent(eventId);
+  if (!event) {
+    await respondEventMissing(interaction, eventId);
+    return;
+  }
+  assertSignupAllowed(interaction, event);
+  const signupOption = (event.signupOptions || []).find((option) => option.id === selectedId);
+  const compatibleRoleIds = signupOption ? compatibleRoleIdsForOption(event, signupOption) : [selectedId];
+  if (signupOption && compatibleRoleIds.length > 1) {
+    const options = compatibleRoleIds.slice(0, 25).map((roleId) => ({
+      label: roleChoiceLabel(event, roleId).slice(0, 100),
+      value: roleId,
+      description: `Jouer ${signupOption.label} en ${roleChoiceLabel(event, roleId)}`.slice(0, 100),
+      emoji: safeComponentEmoji(roleChoiceEmoji(event, roleId))
+    }));
+    await respondToInteraction(interaction, {
+      content: `Tu as choisi **${signupOption.label}**. Dans quel rôle tu le joues pour cet event ?`,
+      components: [
+        new ActionRowBuilder().addComponents(
+          new StringSelectMenuBuilder()
+            .setCustomId(`signup-role-target:${event.id}:${signupOption.id}`)
+            .setPlaceholder("Choisir le rôle joué")
+            .addOptions(options)
+        )
+      ]
     });
-  });
+    return;
+  }
+
+  const roleId = compatibleRoleIds[0] || signupOption?.roleId || selectedId;
+  let updated;
+  try {
+    updated = await updateEvent(eventId, (event) => {
+      return upsertSignup(event, interaction.user, {
+        roleId,
+        signupOptionId: signupOption?.id || null,
+        signupOptionLabel: signupOption?.label || null,
+        state: "confirmed",
+        member: interaction.member
+      });
+    });
+  } catch (error) {
+    if (isMissingEventError(error)) {
+      await respondEventMissing(interaction, eventId);
+      return;
+    }
+    throw error;
+  }
   await refreshEventMessage(client, updated.id);
   await notifySignupWebhook(updated, signupForUser(updated, interaction.user.id), "role-selected");
   await respondToInteraction(interaction, "Inscription mise à jour.");
+}
+
+async function handleRoleTargetSelect(client, interaction) {
+  const acknowledged = await acknowledgeInteraction(interaction);
+  if (!acknowledged) {
+    return;
+  }
+  const selected = interaction.values[0];
+  const [, eventId, optionId] = interaction.customId.split(":");
+  const selectedRoleId = selected;
+  if (!eventId || !optionId || !selectedRoleId) {
+    throw new Error("Interaction d'inscription invalide. Republie l'annonce de l'event.");
+  }
+  const event = await getEvent(eventId);
+  if (!event) {
+    await respondEventMissing(interaction, eventId);
+    return;
+  }
+
+  let updated;
+  try {
+    updated = await updateEvent(eventId, (event) => {
+      assertSignupAllowed(interaction, event);
+      const signupOption = (event.signupOptions || []).find((option) => option.id === optionId);
+      if (!signupOption) {
+        throw new Error("Option d'inscription introuvable sur cet event.");
+      }
+      const compatibleRoleIds = compatibleRoleIdsForOption(event, signupOption);
+      if (!compatibleRoleIds.includes(selectedRoleId)) {
+        throw new Error("Ce rôle n'est pas compatible avec cette option sur cet event.");
+      }
+      return upsertSignup(event, interaction.user, {
+        roleId: selectedRoleId,
+        signupOptionId: signupOption.id,
+        signupOptionLabel: signupOption.label,
+        state: "confirmed",
+        member: interaction.member
+      });
+    });
+  } catch (error) {
+    if (isMissingEventError(error)) {
+      await respondEventMissing(interaction, eventId);
+      return;
+    }
+    throw error;
+  }
+  await refreshEventMessage(client, updated.id);
+  await notifySignupWebhook(updated, signupForUser(updated, interaction.user.id), "role-selected");
+  await respondToInteraction(interaction, { content: "Inscription mise à jour.", components: [] });
 }
 
 async function handleStateButton(client, interaction) {
@@ -381,16 +529,30 @@ async function handleStateButton(client, interaction) {
     return;
   }
   const [, eventId, state] = interaction.customId.split(":");
-  const updated = await updateEvent(eventId, (event) => {
-    assertSignupAllowed(interaction, event);
-    const previous = event.signups.find((signup) => signup.userId === interaction.user.id);
-    const roleId = state === "absence" ? null : previous?.roleId ?? null;
-    return upsertSignup(event, interaction.user, {
-      roleId,
-      state,
-      member: interaction.member
+  const event = await getEvent(eventId);
+  if (!event) {
+    await respondEventMissing(interaction, eventId);
+    return;
+  }
+  let updated;
+  try {
+    updated = await updateEvent(eventId, (event) => {
+      assertSignupAllowed(interaction, event);
+      const previous = event.signups.find((signup) => signup.userId === interaction.user.id);
+      const roleId = state === "absence" ? null : previous?.roleId ?? null;
+      return upsertSignup(event, interaction.user, {
+        roleId,
+        state,
+        member: interaction.member
+      });
     });
-  });
+  } catch (error) {
+    if (isMissingEventError(error)) {
+      await respondEventMissing(interaction, eventId);
+      return;
+    }
+    throw error;
+  }
   await refreshEventMessage(client, updated.id);
   await notifySignupWebhook(updated, signupForUser(updated, interaction.user.id), "state-selected");
   await respondToInteraction(interaction, "Statut mis à jour.");
@@ -502,6 +664,10 @@ async function getGuildOptions(client, guildId) {
 function registerInteractionHandlers(client) {
   client.on(Events.InteractionCreate, async (interaction) => {
     try {
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith("signup-role-target:")) {
+        await handleRoleTargetSelect(client, interaction);
+      }
+
       if (interaction.isStringSelectMenu() && interaction.customId.startsWith("signup-role:")) {
         await handleRoleSelect(client, interaction);
       }

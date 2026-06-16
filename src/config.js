@@ -141,6 +141,7 @@ async function ensureSchema() {
           label text not null,
           emoji text not null default '',
           role_id text not null references app_roles(id) on update cascade on delete restrict,
+          role_ids jsonb not null default '[]'::jsonb,
           sort_order integer not null default 0,
           created_at timestamptz not null default now(),
           updated_at timestamptz not null default now()
@@ -156,6 +157,7 @@ async function ensureSchema() {
         );
 
         alter table app_guilds add column if not exists emoji_guild_id text not null default '';
+        alter table app_signup_options add column if not exists role_ids jsonb not null default '[]'::jsonb;
       `);
       await migrateStructuredConfigFromAppConfig();
     })();
@@ -340,7 +342,8 @@ function rowToSignupOption(row) {
     id: row.id,
     label: row.label,
     emoji: row.emoji,
-    roleId: row.role_id
+    roleId: row.role_id,
+    roleIds: Array.isArray(row.role_ids) && row.role_ids.length ? row.role_ids : [row.role_id].filter(Boolean)
   };
 }
 
@@ -411,16 +414,21 @@ async function upsertRolePg(client, role, sortOrder) {
 }
 
 async function upsertSignupOptionPg(client, option, sortOrder) {
+  const roleIds = Array.isArray(option.roleIds) && option.roleIds.length
+    ? option.roleIds
+    : [option.roleId].filter(Boolean);
+  const primaryRoleId = roleIds[0] || option.roleId;
   await client.query(
     `
       insert into app_signup_options (
-        id, label, emoji, role_id, sort_order, updated_at
+        id, label, emoji, role_id, role_ids, sort_order, updated_at
       )
-      values ($1, $2, $3, $4, $5, now())
+      values ($1, $2, $3, $4, $5, $6, now())
       on conflict (id) do update set
         label = excluded.label,
         emoji = excluded.emoji,
         role_id = excluded.role_id,
+        role_ids = excluded.role_ids,
         sort_order = excluded.sort_order,
         updated_at = excluded.updated_at
     `,
@@ -428,7 +436,8 @@ async function upsertSignupOptionPg(client, option, sortOrder) {
       option.id,
       option.label,
       option.emoji || "",
-      option.roleId,
+      primaryRoleId,
+      JSON.stringify(roleIds),
       sortOrder
     ]
   );
@@ -576,7 +585,7 @@ async function loadConfig() {
 async function saveConfig(config) {
   validateConfig(config);
   await saveConfigPg(config);
-  return config;
+  return loadConfig();
 }
 
 function validateConfig(config) {
@@ -597,10 +606,20 @@ function validateConfig(config) {
   assertUniqueIds(config.templates, "templates");
 
   const roleIds = new Set(config.roles.map((role) => role.id));
+  const signupOptionRoleIds = new Map();
   for (const option of config.signupOptions || []) {
-    if (!roleIds.has(option.roleId)) {
-      throw new Error(`L'option ${option.id} référence un rôle inconnu: ${option.roleId}`);
+    const optionRoleIds = Array.isArray(option.roleIds) && option.roleIds.length
+      ? option.roleIds
+      : [option.roleId].filter(Boolean);
+    if (optionRoleIds.length === 0) {
+      throw new Error(`L'option ${option.id} doit référencer au moins un rôle.`);
     }
+    for (const roleId of optionRoleIds) {
+      if (!roleIds.has(roleId)) {
+        throw new Error(`L'option ${option.id} référence un rôle inconnu: ${roleId}`);
+      }
+    }
+    signupOptionRoleIds.set(option.id, new Set(optionRoleIds));
   }
 
   for (const template of config.templates) {
@@ -613,6 +632,10 @@ function validateConfig(config) {
     for (const option of template.signupOptions || []) {
       if (!roleIds.has(option.roleId)) {
         throw new Error(`L'option ${option.id} du template ${template.id} référence un rôle inconnu: ${option.roleId}`);
+      }
+      const compatibleRoleIds = signupOptionRoleIds.get(option.id);
+      if (compatibleRoleIds && !compatibleRoleIds.has(option.roleId)) {
+        throw new Error(`L'option ${option.id} du template ${template.id} utilise un rôle non compatible: ${option.roleId}`);
       }
     }
   }

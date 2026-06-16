@@ -23,7 +23,9 @@ const state = {
   openTemplateIndex: 0,
   templateSearch: "",
   templateTag: "",
-  leaderSearchTimeout: null
+  leaderSearchTimeout: null,
+  dirtyConfig: false,
+  toastIndex: 0
 };
 
 const byId = (id) => document.getElementById(id);
@@ -32,6 +34,45 @@ const CHANNEL_PREFIX_EMOJIS = ["🟢", "🟡", "🔵", "🔴", "🟣", "⚔️",
 
 function headers(extra = {}) {
   return { ...extra };
+}
+
+function showToast(message, type = "info") {
+  const stack = byId("toastStack");
+  const id = `toast-${++state.toastIndex}`;
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
+  toast.id = id;
+  toast.innerHTML = `<span>${escapeHtml(message)}</span><button type="button" aria-label="Fermer" data-close-toast="${id}">×</button>`;
+  stack.appendChild(toast);
+  window.setTimeout(() => toast.remove(), type === "error" ? 7000 : 4200);
+}
+
+function setStatus(message, type = "info", options = {}) {
+  byId("status").textContent = message || "";
+  if (message && options.toast !== false) {
+    showToast(message, type);
+  }
+}
+
+function activeConfigLabel() {
+  return {
+    templatesView: "templates",
+    classesView: "rôles & classes",
+    emojisView: "emojis",
+    adminsView: "admins serveur",
+    advancedConfigView: "configuration avancée"
+  }[state.activeTab] || "configuration";
+}
+
+function isConfigTab(tab = state.activeTab) {
+  return ["templatesView", "classesView", "emojisView", "adminsView", "advancedConfigView"].includes(tab);
+}
+
+function setConfigDirty(dirty = true) {
+  state.dirtyConfig = Boolean(dirty);
+  const show = state.dirtyConfig && isConfigTab();
+  byId("dirtySaveBar").classList.toggle("hidden", !show);
+  byId("dirtySaveLabel").textContent = `Modifications ${activeConfigLabel()} non sauvegardées`;
 }
 
 function setAuthenticated(authenticated) {
@@ -56,6 +97,7 @@ function renderTabs() {
     );
     view.classList.toggle("hidden", !visible);
   }
+  setConfigDirty(state.dirtyConfig);
 }
 
 function todayForConfiguredTimezone() {
@@ -271,7 +313,7 @@ function applyTemplate(templateId) {
   const template = state.config.templates.find((item) => item.id === templateId);
   byId("templateSummary").textContent = `Template appliqué: ${templateSummary(template)}`;
   state.compositionEditorOpen = templateId === "custom";
-  state.eventSignupOptions = structuredClone(template.signupOptions || []);
+  state.eventSignupOptions = (template.signupOptions || []).map((option) => templateOptionView(template, option));
   state.roles = template.roles.map((slot) => {
     const definition = roleDefinition(slot.roleId);
     return {
@@ -332,6 +374,23 @@ function updateRolePreview(select) {
   }
 }
 
+function updateRoleMultiSelectSummary(container) {
+  const selected = [...container.querySelectorAll("[data-class-field=roleIds]:checked")]
+    .map((input) => {
+      const role = roleDefinition(input.value);
+      return { id: input.value, label: role?.label || input.value };
+    });
+  const trigger = container.querySelector("[data-role-multi-trigger]");
+  if (trigger) {
+    trigger.innerHTML = selected.length
+      ? selected.map((role) => `<span class="role-multi-chip">${escapeHtml(role.label)}</span>`).join("")
+      : `<span class="role-multi-placeholder">Choisir plusieurs rôles compatibles</span>`;
+  }
+  for (const option of container.querySelectorAll(".role-multi-option")) {
+    option.classList.toggle("selected", Boolean(option.querySelector("input")?.checked));
+  }
+}
+
 function catalogOptionRoleOptionsHtml(selectedRoleId) {
   return [
     selectedRoleId && !state.config.roles.some((role) => role.id === selectedRoleId)
@@ -339,6 +398,38 @@ function catalogOptionRoleOptionsHtml(selectedRoleId) {
       : "",
     roleOptionsHtml(selectedRoleId)
   ].join("");
+}
+
+function optionRoleIds(option) {
+  return Array.isArray(option?.roleIds) && option.roleIds.length
+    ? option.roleIds
+    : [option?.roleId].filter(Boolean);
+}
+
+function roleMultiSelectHtml(roleIds, fieldName) {
+  const selected = new Set(roleIds || []);
+  const selectedRoles = (state.config.roles || [])
+    .filter((role) => selected.has(role.id))
+    .map((role) => ({ id: role.id, label: role.label }));
+  return `
+    <div class="role-multi-select" data-role-multi-select>
+      <button type="button" class="role-multi-trigger" data-role-multi-trigger>
+        ${selectedRoles.length
+          ? selectedRoles.map((role) => `<span class="role-multi-chip">${escapeHtml(role.label)}</span>`).join("")
+          : `<span class="role-multi-placeholder">Choisir plusieurs rôles compatibles</span>`}
+      </button>
+      <div class="role-multi-menu hidden" data-role-multi-menu>
+        ${(state.config.roles || [])
+          .map((role) => `
+            <label class="role-multi-option ${selected.has(role.id) ? "selected" : ""}">
+              <input type="checkbox" ${fieldName} value="${role.id}" ${selected.has(role.id) ? "checked" : ""}>
+              <span>${escapeHtml(role.label)}</span>
+            </label>
+          `)
+          .join("")}
+      </div>
+    </div>
+  `;
 }
 
 function templateRoleOptionsHtml(template, selectedRoleId) {
@@ -356,7 +447,7 @@ function templateSignupCatalogOptions(template, selectedOptionId, excludedOption
   const openRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
   const options = (state.config.signupOptions || []).filter((option) =>
     (option.id === selectedOptionId || !excludedOptionIds.has(option.id)) &&
-    (openRoleIds.size === 0 || openRoleIds.has(option.roleId))
+    (openRoleIds.size === 0 || optionRoleIds(option).some((roleId) => openRoleIds.has(roleId)))
   );
   const selectedStillAvailable = options.some((option) => option.id === selectedOptionId);
   const selectedOption = (state.config.signupOptions || []).find((option) => option.id === selectedOptionId);
@@ -365,14 +456,51 @@ function templateSignupCatalogOptions(template, selectedOptionId, excludedOption
       ? `<option value="${selectedOption.id}" selected>${selectedOption.label} - rôle non ouvert</option>`
       : "",
     ...options.map((option) => {
-      const role = roleDefinition(option.roleId);
-      return `<option value="${option.id}" ${option.id === selectedOptionId ? "selected" : ""}>${option.label}${role ? ` - ${role.label}` : ""}</option>`;
+      const roles = optionRoleIds(option).map((roleId) => roleDefinition(roleId)?.label || roleId).join(", ");
+      return `<option value="${option.id}" ${option.id === selectedOptionId ? "selected" : ""}>${option.label}${roles ? ` - ${roles}` : ""}</option>`;
     })
   ].join("");
 }
 
 function catalogOptionById(optionId) {
   return (state.config.signupOptions || []).find((option) => option.id === optionId) || null;
+}
+
+function templateOptionRoleOptionsHtml(template, option, selectedRoleId) {
+  const openRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
+  const compatibleRoleIds = optionRoleIds(option).filter((roleId) => openRoleIds.size === 0 || openRoleIds.has(roleId));
+  const selectedStillAvailable = compatibleRoleIds.includes(selectedRoleId);
+  return [
+    selectedRoleId && !selectedStillAvailable
+      ? `<option value="${selectedRoleId}" selected>Rôle non ouvert (${selectedRoleId})</option>`
+      : "",
+    ...compatibleRoleIds.map((roleId) => {
+      const role = roleDefinition(roleId);
+      return `<option value="${roleId}" ${roleId === selectedRoleId ? "selected" : ""}>${role?.label || roleId}</option>`;
+    })
+  ].join("");
+}
+
+function templateOptionRoleId(template, option, currentRoleId) {
+  const openRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
+  const compatibleRoleIds = optionRoleIds(option).filter((roleId) => openRoleIds.size === 0 || openRoleIds.has(roleId));
+  if (currentRoleId && compatibleRoleIds.includes(currentRoleId)) {
+    return currentRoleId;
+  }
+  return compatibleRoleIds[0] || optionRoleIds(option)[0] || "";
+}
+
+function templateOptionView(template, option) {
+  const catalogOption = catalogOptionById(option.id) || option;
+  const openRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
+  const roleIds = optionRoleIds(catalogOption).filter((roleId) => openRoleIds.size === 0 || openRoleIds.has(roleId));
+  return {
+    id: catalogOption.id || option.id,
+    label: catalogOption.label || option.label || "",
+    emoji: catalogOption.emoji || option.emoji || "",
+    roleId: templateOptionRoleId(template, catalogOption, option.roleId),
+    roleIds: roleIds.length ? roleIds : optionRoleIds(catalogOption)
+  };
 }
 
 function applyCatalogOptionToTemplateRow(row, optionId) {
@@ -384,7 +512,17 @@ function applyCatalogOptionToTemplateRow(row, optionId) {
   row.querySelector("[data-template-option-field=id]").value = option.id;
   row.querySelector("[data-template-option-field=label]").value = option.label;
   row.querySelector("[data-template-option-field=emoji]").value = option.emoji || "";
-  row.querySelector("[data-template-option-field=roleId]").value = option.roleId;
+  const roleInput = row.querySelector("[data-template-option-field=roleId]");
+  const templateNode = row.closest("[data-template-index]");
+  const template = state.config.templates[Number(templateNode?.dataset.templateIndex)] || { roles: [] };
+  const roleId = templateOptionRoleId(template, option, roleInput.value);
+  roleInput.value = roleId;
+  const roleIdsInput = row.querySelector("[data-template-option-field=roleIds]");
+  if (roleIdsInput) {
+    const openRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
+    const roleIds = optionRoleIds(option).filter((item) => openRoleIds.size === 0 || openRoleIds.has(item));
+    roleIdsInput.value = JSON.stringify(roleIds.length ? roleIds : optionRoleIds(option));
+  }
   const preview = row.querySelector("[data-template-option-preview]");
   if (preview) {
     preview.innerHTML = option.emoji ? renderEmojiPreview(option.emoji, { showLabel: false }) : "";
@@ -504,6 +642,7 @@ function addEmojiToPalette(value) {
   if (!state.config.emojiPalette.includes(emoji)) {
     state.config.emojiPalette.push(emoji);
   }
+  setConfigDirty(true);
   renderEmojiAdmin();
   byId("configJson").value = JSON.stringify(state.config, null, 2);
 }
@@ -625,8 +764,9 @@ function renderConfigEditors() {
         <input type="hidden" data-class-field="id" value="${option.id || ""}">
         <input data-class-field="label" value="${option.label || ""}" placeholder="Nom affiché">
         ${emojiFieldHtml(option.emoji || "", "data-class-field=\"emoji\"")}
-        <span class="role-select-preview" data-role-preview>${rolePreviewHtml(option.roleId)}</span>
-        <select data-class-field="roleId">${catalogOptionRoleOptionsHtml(option.roleId)}</select>
+        <div class="multi-select-field" data-class-role-list>
+          ${roleMultiSelectHtml(optionRoleIds(option), "data-class-field=\"roleIds\"")}
+        </div>
         <button type="button" class="icon-button danger" data-remove-class-option="${index}" aria-label="Supprimer">🗑️</button>
       </div>
     `)
@@ -689,17 +829,20 @@ function renderConfigEditors() {
               <h3>Options d'inscription</h3>
               <button type="button" class="secondary" data-add-template-signup-option="${templateIndex}">Ajouter</button>
             </div>
+            <p class="hint template-section-hint">Chaque option est affichée une seule fois dans le menu Discord, mais plusieurs joueurs peuvent la choisir. Les places restent gérées par la composition.</p>
             <div class="template-signup-options">
               ${(template.signupOptions || []).map((option, optionIndex) => {
                 const usedOptionIds = new Set((template.signupOptions || []).map((item, index) => index === optionIndex ? null : item.id).filter(Boolean));
+                const viewOption = templateOptionView(template, option);
                 return `
                   <div class="config-row template-option-row" data-template-signup-option-index="${optionIndex}">
-                    <input type="hidden" data-template-option-field="id" value="${option.id || ""}">
-                    <input type="hidden" data-template-option-field="label" value="${option.label || ""}">
-                    <input type="hidden" data-template-option-field="emoji" value="${option.emoji || ""}">
-                    <input type="hidden" data-template-option-field="roleId" value="${option.roleId || ""}">
-                    <span class="template-option-preview" data-template-option-preview>${option.emoji ? renderEmojiPreview(option.emoji, { showLabel: false }) : ""}</span>
-                    <select data-template-option-catalog>${templateSignupCatalogOptions(template, option.id, usedOptionIds)}</select>
+                    <input type="hidden" data-template-option-field="id" value="${viewOption.id || ""}">
+                    <input type="hidden" data-template-option-field="label" value="${viewOption.label || ""}">
+                    <input type="hidden" data-template-option-field="emoji" value="${viewOption.emoji || ""}">
+                    <input type="hidden" data-template-option-field="roleId" value="${viewOption.roleId || ""}">
+                    <input type="hidden" data-template-option-field="roleIds" value="${escapeAttr(JSON.stringify(viewOption.roleIds || []))}">
+                    <span class="template-option-preview" data-template-option-preview>${viewOption.emoji ? renderEmojiPreview(viewOption.emoji, { showLabel: false }) : ""}</span>
+                    <select data-template-option-catalog>${templateSignupCatalogOptions(template, viewOption.id, usedOptionIds)}</select>
                     <button type="button" class="icon-button danger" data-remove-template-signup-option="${templateIndex}:${optionIndex}" aria-label="Supprimer">🗑️</button>
                   </div>
                 `;
@@ -771,6 +914,7 @@ function createTemplateFromModal(event) {
   state.templateSearch = label;
   state.templateTag = game;
   closeTemplateCreateModal();
+  setConfigDirty(true);
   renderConfigEditors();
   readConfigEditors();
 }
@@ -805,16 +949,16 @@ function readConfigEditors() {
       id: row.querySelector("[data-class-field=id]").value.trim(),
       label: row.querySelector("[data-class-field=label]").value.trim(),
       emoji: row.querySelector("[data-class-field=emoji]").value.trim(),
-      roleId: row.querySelector("[data-class-field=roleId]").value
+      roleIds: [...row.querySelectorAll("[data-class-field=roleIds]:checked")].map((input) => input.value)
     }))
-    .filter((option) => option.label && option.roleId)
+    .filter((option) => option.label && option.roleIds.length > 0)
     .map((option) => {
       const preferredId = option.id || slugify(option.label);
       const id = preferredId && !usedSignupOptionIds.has(preferredId)
         ? preferredId
         : uniqueSlug(option.label, usedSignupOptionIds, "nouvelle_option");
       usedSignupOptionIds.add(id);
-      return { ...option, id };
+      return { ...option, id, roleId: option.roleIds[0] };
     });
 
   const templateNodes = [...document.querySelectorAll("[data-template-index]")];
@@ -842,7 +986,8 @@ function readConfigEditors() {
         id: row.querySelector("[data-template-option-field=id]").value.trim(),
         label: row.querySelector("[data-template-option-field=label]").value.trim(),
         emoji: row.querySelector("[data-template-option-field=emoji]").value.trim(),
-        roleId: row.querySelector("[data-template-option-field=roleId]").value
+        roleId: row.querySelector("[data-template-option-field=roleId]").value,
+        roleIds: JSON.parse(row.querySelector("[data-template-option-field=roleIds]")?.value || "[]")
       }))
         .filter((option) => option.label && option.roleId)
         .map((option) => {
@@ -1078,7 +1223,7 @@ async function saveGuildSettings(options = {}) {
   });
   const result = await response.json();
   if (!response.ok) {
-    byId("status").textContent = `Erreur: ${result.error}`;
+    setStatus(`Erreur: ${result.error}`, "error");
     throw new Error(result.error || "Sauvegarde serveur impossible.");
   }
   state.guildAdmins = {
@@ -1088,8 +1233,9 @@ async function saveGuildSettings(options = {}) {
   };
   renderGuildAdmins();
   renderEmojiAdmin();
+  setConfigDirty(false);
   if (!options.silent) {
-    byId("status").textContent = source === "emojis" ? "Source emojis sauvegardée." : "Admins serveur sauvegardés.";
+    setStatus(source === "emojis" ? "Source emojis sauvegardée." : "Admins serveur sauvegardés.", "success");
   }
   return state.guildAdmins;
 }
@@ -1103,12 +1249,30 @@ async function saveEmojiSource() {
     await saveGuildSettings({ source: "emojis" });
   } catch (error) {
     byId("emojiSourceStatus").textContent = `Erreur: ${error.message}`;
+    showToast(`Erreur: ${error.message}`, "error");
   }
 }
 
-async function saveConfig(useVisualEditors = true) {
+async function saveActiveConfig() {
+  if (state.activeTab === "adminsView") {
+    await saveGuildAdmins();
+    return;
+  }
+  if (state.activeTab === "emojisView") {
+    await saveGuildSettings({ source: "emojis", silent: true });
+    await saveConfig(true);
+    return;
+  }
+  await saveConfig(state.activeTab !== "advancedConfigView");
+}
+
+async function saveConfig(useVisualEditors = true, options = {}) {
+  const expectedOptionRoleCounts = new Map();
   if (useVisualEditors) {
     readConfigEditors();
+    for (const option of state.config.signupOptions || []) {
+      expectedOptionRoleCounts.set(option.id, optionRoleIds(option).length);
+    }
   }
   const config = JSON.parse(byId("configJson").value);
   const response = await fetch("/api/config", {
@@ -1121,13 +1285,21 @@ async function saveConfig(useVisualEditors = true) {
   });
   const result = await response.json();
   if (!response.ok) {
-    byId("status").textContent = `Erreur: ${result.error}`;
+    setStatus(`Erreur: ${result.error}`, "error");
     return;
   }
 
   state.config = result.config;
+  const lostMultiRoleOption = (state.config.signupOptions || []).find((option) =>
+    (expectedOptionRoleCounts.get(option.id) || 0) > 1 && optionRoleIds(option).length <= 1
+  );
   renderConfig();
-  byId("status").textContent = "Configuration sauvegardée.";
+  setConfigDirty(false);
+  if (lostMultiRoleOption) {
+    setStatus("Configuration sauvegardée mais les rôles multiples n'ont pas été relus depuis la base. Redémarre le serveur Node pour appliquer la migration role_ids.", "error");
+    return;
+  }
+  setStatus("Configuration sauvegardée.", "success", { toast: !options.silent });
 }
 
 async function loadEventIntoForm(eventId) {
@@ -1213,9 +1385,16 @@ document.addEventListener("change", (event) => {
     event.target.closest("#templatesView") ||
     event.target.closest("#classesView") ||
     event.target.closest("#emojisView") ||
+    event.target.closest("#adminsView") ||
     event.target.closest("#advancedConfigView")
   ) {
+    setConfigDirty(true);
     readConfigEditors();
+  }
+
+  const roleMultiSelect = event.target.closest("[data-role-multi-select]");
+  if (roleMultiSelect) {
+    updateRoleMultiSelectSummary(roleMultiSelect);
   }
 
   if (event.target.matches("[data-template-role-field=roleId]")) {
@@ -1227,7 +1406,25 @@ document.addEventListener("change", (event) => {
   }
 });
 
+document.addEventListener("input", (event) => {
+  if (
+    event.target.closest("#templatesView") ||
+    event.target.closest("#classesView") ||
+    event.target.closest("#emojisView") ||
+    event.target.closest("#adminsView") ||
+    event.target.closest("#advancedConfigView")
+  ) {
+    setConfigDirty(true);
+  }
+});
+
 document.addEventListener("click", (event) => {
+  const closeToast = event.target.dataset.closeToast;
+  if (closeToast) {
+    byId(closeToast)?.remove();
+    return;
+  }
+
   if (event.target.id === "templateCreateModal") {
     closeTemplateCreateModal();
   }
@@ -1236,6 +1433,25 @@ document.addEventListener("click", (event) => {
   if (tab) {
     state.activeTab = tab;
     renderTabs();
+  }
+
+  const multiTrigger = event.target.closest("[data-role-multi-trigger]");
+  if (multiTrigger) {
+    const container = multiTrigger.closest("[data-role-multi-select]");
+    const menu = container.querySelector("[data-role-multi-menu]");
+    for (const otherMenu of document.querySelectorAll("[data-role-multi-menu]")) {
+      if (otherMenu !== menu) {
+        otherMenu.classList.add("hidden");
+      }
+    }
+    menu.classList.toggle("hidden");
+    return;
+  }
+
+  if (!event.target.closest("[data-role-multi-select]")) {
+    for (const menu of document.querySelectorAll("[data-role-multi-menu]")) {
+      menu.classList.add("hidden");
+    }
   }
 
   const toggleTemplate = event.target.closest("[data-toggle-template]")?.dataset.toggleTemplate;
@@ -1302,6 +1518,7 @@ document.addEventListener("click", (event) => {
   const removePaletteEmoji = event.target.dataset.removePaletteEmoji;
   if (removePaletteEmoji !== undefined) {
     state.config.emojiPalette.splice(Number(removePaletteEmoji), 1);
+    setConfigDirty(true);
     renderEmojiAdmin();
     byId("configJson").value = JSON.stringify(state.config, null, 2);
   }
@@ -1312,14 +1529,16 @@ document.addEventListener("click", (event) => {
     const usedByTemplate = state.config.templates.some((template) =>
       (template.roles || []).some((slot) => slot.roleId === group.id)
     );
-    const usedByOption = state.config.templates.some((template) =>
-      (template.signupOptions || []).some((option) => option.roleId === group.id)
-    );
+    const usedByOption = state.config.signupOptions.some((option) => optionRoleIds(option).includes(group.id)) ||
+      state.config.templates.some((template) =>
+        (template.signupOptions || []).some((option) => option.roleId === group.id)
+      );
     if ((usedByTemplate || usedByOption) && !confirm("Ce groupe est utilisé par des templates/classes. Le supprimer peut rendre la config invalide. Continuer ?")) {
       return;
     }
 
     state.config.roles.splice(Number(removeGroup), 1);
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1335,6 +1554,7 @@ document.addEventListener("click", (event) => {
     }
 
     state.config.signupOptions.splice(Number(removeClassOption), 1);
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1342,6 +1562,7 @@ document.addEventListener("click", (event) => {
   const removeTemplate = event.target.dataset.removeTemplate;
   if (removeTemplate !== undefined) {
     state.config.templates.splice(Number(removeTemplate), 1);
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1352,7 +1573,7 @@ document.addEventListener("click", (event) => {
     const usedRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
     const availableRole = state.config.roles.find((role) => !usedRoleIds.has(role.id));
     if (!availableRole) {
-      byId("status").textContent = "Tous les rôles sont déjà dans cette composition.";
+      setStatus("Tous les rôles sont déjà dans cette composition.", "info");
       return;
     }
 
@@ -1360,6 +1581,7 @@ document.addEventListener("click", (event) => {
       roleId: availableRole.id,
       capacity: availableRole.defaultCapacity ?? 1
     });
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1368,6 +1590,7 @@ document.addEventListener("click", (event) => {
   if (removeTemplateRole) {
     const [templateIndex, slotIndex] = removeTemplateRole.split(":").map(Number);
     state.config.templates[templateIndex].roles.splice(slotIndex, 1);
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1379,10 +1602,10 @@ document.addEventListener("click", (event) => {
     const openRoleIds = new Set((template.roles || []).map((slot) => slot.roleId));
     const usedOptionIds = new Set(template.signupOptions.map((option) => option.id));
     const catalogOption = (state.config.signupOptions || []).find((option) =>
-      !usedOptionIds.has(option.id) && (openRoleIds.size === 0 || openRoleIds.has(option.roleId))
+      !usedOptionIds.has(option.id) && (openRoleIds.size === 0 || optionRoleIds(option).some((roleId) => openRoleIds.has(roleId)))
     );
     if (!catalogOption) {
-      byId("status").textContent = "Toutes les options disponibles sont déjà dans ce template.";
+      setStatus("Toutes les options compatibles avec les rôles ouverts de ce template sont déjà ajoutées. Une option peut quand même être choisie par plusieurs joueurs.", "info");
       return;
     }
 
@@ -1390,8 +1613,10 @@ document.addEventListener("click", (event) => {
       id: catalogOption.id,
       label: catalogOption.label,
       emoji: catalogOption?.emoji || "",
-      roleId: catalogOption.roleId
+      roleId: templateOptionRoleId(template, catalogOption, catalogOption.roleId),
+      roleIds: optionRoleIds(catalogOption).filter((roleId) => openRoleIds.size === 0 || openRoleIds.has(roleId))
     });
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1402,6 +1627,7 @@ document.addEventListener("click", (event) => {
     const template = state.config.templates[templateIndex];
     template.signupOptions = template.signupOptions || [];
     template.signupOptions.splice(optionIndex, 1);
+    setConfigDirty(true);
     renderConfigEditors();
     readConfigEditors();
   }
@@ -1430,8 +1656,11 @@ byId("emojiSearch").addEventListener("input", renderEmojiPickerList);
 byId("saveConfig").addEventListener("click", () => saveConfig(false));
 byId("saveTemplatesConfig").addEventListener("click", () => saveConfig(true));
 byId("saveClassesConfig").addEventListener("click", () => saveConfig(true));
-byId("saveEmojisConfig").addEventListener("click", () => saveConfig(true));
+byId("saveEmojisConfig").addEventListener("click", () => saveActiveConfig().catch((error) => setStatus(`Erreur: ${error.message}`, "error")));
 byId("saveEmojiSource").addEventListener("click", saveEmojiSource);
+byId("dirtySaveButton").addEventListener("click", () => {
+  saveActiveConfig().catch((error) => setStatus(`Erreur: ${error.message}`, "error"));
+});
 byId("refreshEmojiSources").addEventListener("click", loadDiscordOptions);
 byId("serverEmojiSearch").addEventListener("input", renderEmojiAdmin);
 byId("addEmojiToPalette").addEventListener("click", () => {
@@ -1456,6 +1685,7 @@ byId("addGroup").addEventListener("click", () => {
     emoji: "",
     defaultCapacity: 1
   });
+  setConfigDirty(true);
   renderConfigEditors();
   readConfigEditors();
 });
@@ -1466,8 +1696,10 @@ byId("addClassOption").addEventListener("click", () => {
     id: uniqueSignupOptionId("Nouvelle option"),
     label: "Nouvelle option",
     emoji: "",
-    roleId: firstRole?.id || ""
+    roleId: firstRole?.id || "",
+    roleIds: firstRole?.id ? [firstRole.id] : []
   });
+  setConfigDirty(true);
   renderConfigEditors();
   readConfigEditors();
 });
@@ -1540,7 +1772,7 @@ byId("eventForm").addEventListener("submit", async (event) => {
     : state.allowedRoleIds;
   delete payload.linksJson;
 
-  byId("status").textContent = state.editingEventId ? "Modification en cours..." : "Création en cours...";
+  setStatus(state.editingEventId ? "Modification en cours..." : "Création en cours...", "info", { toast: false });
   const response = await fetch(state.editingEventId ? `/api/events/${state.editingEventId}` : "/api/events", {
     method: state.editingEventId ? "PUT" : "POST",
     headers: {
@@ -1551,9 +1783,10 @@ byId("eventForm").addEventListener("submit", async (event) => {
   });
 
   const result = await response.json();
-  byId("status").textContent = response.ok
-    ? `Annonce enregistrée: ${result.discordUrl ?? result.id}`
-    : `Erreur: ${result.error}`;
+  setStatus(
+    response.ok ? `Annonce enregistrée: ${result.discordUrl ?? result.id}` : `Erreur: ${result.error}`,
+    response.ok ? "success" : "error"
+  );
   if (response.ok) {
     setFormMode(result.id);
     await loadEvents();

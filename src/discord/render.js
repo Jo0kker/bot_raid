@@ -40,6 +40,18 @@ function signupGroupId(event, signup) {
   return signup.roleId || optionById(event, signup.signupOptionId)?.roleId || null;
 }
 
+function optionRoleIds(option) {
+  return Array.isArray(option?.roleIds) && option.roleIds.length
+    ? option.roleIds
+    : [option?.roleId].filter(Boolean);
+}
+
+function compatibleOptionRoleIds(event, option) {
+  const openRoleIds = new Set((event.roles || []).map((slot) => slot.roleId));
+  const roleIds = optionRoleIds(option).filter((roleId) => openRoleIds.size === 0 || openRoleIds.has(roleId));
+  return roleIds.length ? roleIds : [option?.roleId || option?.id].filter(Boolean);
+}
+
 function countForRole(event, roleId) {
   return event.signups.filter((signup) => signupGroupId(event, signup) === roleId && signup.state === "confirmed").length;
 }
@@ -233,12 +245,16 @@ function buildEventMessage(config, event) {
 
   const signupOptions = (event.signupOptions?.length ? event.signupOptions : event.roles).slice(0, 25);
   const roleOptions = signupOptions.map((option) => {
-    const groupId = option.roleId || option.id;
+    const compatibleRoleIds = compatibleOptionRoleIds(event, option);
+    const groupId = compatibleRoleIds[0] || option.roleId || option.id;
     const group = event.roles.find((slot) => slot.roleId === groupId);
+    const description = compatibleRoleIds.length > 1
+      ? `Choix du rôle ensuite: ${compatibleRoleIds.map((roleId) => roleLabel(event, event.roles.find((slot) => slot.roleId === roleId) || { roleId })).join(", ")}`
+      : `${roleLabel(event, group || option)} · ${countForRole(event, groupId)}/${group?.capacity ?? option.capacity ?? "?"} inscrits`;
     return {
       label: (option.label || roleLabel(event, option)).slice(0, 100),
       value: `role:${event.id}:${option.id || option.roleId}`,
-      description: `${roleLabel(event, group || option)} · ${countForRole(event, groupId)}/${group?.capacity ?? option.capacity ?? "?"} inscrits`.slice(0, 100),
+      description: description.slice(0, 100),
       emoji: safeEmoji(option.emoji)
     };
   });

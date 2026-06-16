@@ -289,7 +289,7 @@ textarea {
 }
 
 .template-option-row {
-  grid-template-columns: 42px minmax(220px, 1fr) 42px;
+  grid-template-columns: 42px minmax(220px, 1fr) minmax(140px, 0.6fr) 42px;
 }
 
 .template-option-preview {
@@ -329,7 +329,103 @@ textarea {
 }
 
 .class-config-row {
-  grid-template-columns: minmax(220px, 1fr) 118px 42px minmax(180px, 0.8fr) 42px;
+  grid-template-columns: minmax(220px, 1fr) 118px minmax(220px, 1fr) 42px;
+}
+
+.role-multi-select {
+  position: relative;
+}
+
+.role-multi-trigger {
+  width: 100%;
+  min-height: 40px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  border: 1px solid #3e424d;
+  border-radius: 6px;
+  background: #14151a;
+  color: #f6f6f7;
+  padding: 10px 11px;
+  text-align: left;
+}
+
+.role-multi-placeholder {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #b9bbc4;
+}
+
+.role-multi-chip {
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #46617f;
+  border-radius: 999px;
+  background: #22344f;
+  color: #f2f2f3;
+  padding: 3px 8px;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.role-multi-trigger::after {
+  content: "▾";
+  color: #b9bbc4;
+  margin-left: auto;
+}
+
+.role-multi-trigger:has(.role-multi-chip)::after {
+  margin-left: 10px;
+}
+
+.role-multi-menu {
+  position: absolute;
+  z-index: 12;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid #3e424d;
+  border-radius: 6px;
+  background: #18191e;
+  box-shadow: 0 14px 30px rgb(0 0 0 / 35%);
+  padding: 8px;
+}
+
+.role-multi-menu.hidden {
+  display: none;
+}
+
+.role-multi-option {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-weight: 600;
+}
+
+.role-multi-option:hover {
+  background: #232631;
+}
+
+.role-multi-option.selected {
+  background: #22344f;
+  color: #ffffff;
+}
+
+.role-multi-option input {
+  width: auto;
 }
 
 .modal {
@@ -755,6 +851,78 @@ button.danger {
 
 #status {
   color: #b9bbc4;
+}
+
+.dirty-save-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 20;
+  width: min(560px, calc(100vw - 28px));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #4b5f83;
+  border-radius: 8px;
+  background: #202839;
+  box-shadow: 0 16px 42px rgb(0 0 0 / 35%);
+  padding: 12px 14px;
+  transform: translateX(-50%);
+}
+
+.dirty-save-bar.hidden {
+  display: none;
+}
+
+.dirty-save-bar span {
+  color: #f2f2f3;
+  font-weight: 700;
+}
+
+.toast-stack {
+  position: fixed;
+  right: 18px;
+  bottom: 86px;
+  z-index: 21;
+  display: grid;
+  gap: 10px;
+  width: min(420px, calc(100vw - 28px));
+}
+
+.toast {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid #3e424d;
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: #202126;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 30%);
+  padding: 12px;
+  color: #f2f2f3;
+}
+
+.toast.success {
+  border-left-color: #2f9e62;
+}
+
+.toast.error {
+  border-left-color: #d74d45;
+}
+
+.toast.info {
+  border-left-color: #3678d8;
+}
+
+.toast button {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 6px;
+  background: #333640;
 }
 
 @media (max-width: 760px) {
