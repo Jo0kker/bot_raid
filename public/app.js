@@ -1274,7 +1274,13 @@ async function saveConfig(useVisualEditors = true, options = {}) {
       expectedOptionRoleCounts.set(option.id, optionRoleIds(option).length);
     }
   }
-  const config = JSON.parse(byId("configJson").value);
+  let config;
+  try {
+    config = JSON.parse(byId("configJson").value);
+  } catch (error) {
+    setStatus(`JSON invalide: ${error.message}`, "error");
+    return;
+  }
   const response = await fetch("/api/config", {
     method: "PUT",
     headers: {
@@ -1385,11 +1391,14 @@ document.addEventListener("change", (event) => {
     event.target.closest("#templatesView") ||
     event.target.closest("#classesView") ||
     event.target.closest("#emojisView") ||
-    event.target.closest("#adminsView") ||
-    event.target.closest("#advancedConfigView")
+    event.target.closest("#adminsView")
   ) {
     setConfigDirty(true);
     readConfigEditors();
+  }
+
+  if (event.target.closest("#advancedConfigView")) {
+    setConfigDirty(true);
   }
 
   const roleMultiSelect = event.target.closest("[data-role-multi-select]");

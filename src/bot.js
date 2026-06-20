@@ -10,7 +10,7 @@ const {
   StringSelectMenuBuilder
 } = require("discord.js");
 const { getGuild, loadConfig } = require("./config");
-const { getEvent, updateEvent } = require("./storage");
+const { getEvent, readEvents, updateEvent } = require("./storage");
 const { buildEventMessage } = require("./discord/render");
 const { envFlag } = require("./utils/env");
 
@@ -213,6 +213,94 @@ async function deleteEventMessage(client, event, options = {}) {
     }
     throw error;
   }
+}
+
+function eventCleanupAtSeconds(config, event) {
+  const start = Number(event.timestampSeconds || 0);
+  if (!start) {
+    return null;
+  }
+  const durationMinutes = Number(config.defaults?.durationMinutes ?? 120);
+  const cleanupDelayMinutes = Number(config.defaults?.cleanupDelayMinutes ?? 0);
+  return start + Math.max(durationMinutes, 0) * 60 + Math.max(cleanupDelayMinutes, 0) * 60;
+}
+
+function cleanupEnabled(config) {
+  return config.defaults?.cleanupEnabled !== false;
+}
+
+async function cleanupFinishedEvents(client) {
+  const config = await loadConfig();
+  if (!cleanupEnabled(config)) {
+    console.log("Cleanup automatique désactivé.");
+    return;
+  }
+
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const events = await readEvents();
+  let publishedCount = 0;
+  let dueCount = 0;
+  let nextCleanupAt = null;
+  for (const event of events) {
+    if (event.status !== "published" || !event.discord?.channelId) {
+      continue;
+    }
+    publishedCount += 1;
+    const cleanupAt = eventCleanupAtSeconds(config, event);
+    if (!cleanupAt || cleanupAt > nowSeconds) {
+      if (cleanupAt && (!nextCleanupAt || cleanupAt < nextCleanupAt)) {
+        nextCleanupAt = cleanupAt;
+      }
+      continue;
+    }
+
+    dueCount += 1;
+    try {
+      await deleteEventMessage(client, event, { deleteCreatedChannel: Boolean(event.discord.createdChannel) });
+      await updateEvent(event.id, (current) => ({
+        ...current,
+        status: "archived",
+        discord: {
+          ...(current.discord || {}),
+          deletedAt: new Date().toISOString()
+        }
+      }));
+      console.log(`Event archivé automatiquement: ${event.id} (${event.title})`);
+    } catch (error) {
+      console.error(`Cleanup event impossible ${event.id}: ${error.message}`);
+    }
+  }
+  const nextText = nextCleanupAt ? ` prochain=${new Date(nextCleanupAt * 1000).toISOString()}` : "";
+  console.log(`Cleanup automatique: ${publishedCount} event(s) publié(s), ${dueCount} archivé(s).${nextText}`);
+}
+
+async function startEventCleanupScheduler(client) {
+  let running = false;
+  const run = async () => {
+    if (running) {
+      return;
+    }
+    running = true;
+    try {
+      await cleanupFinishedEvents(client);
+    } catch (error) {
+      console.error(`Cleanup automatique impossible: ${error.message}`);
+    } finally {
+      running = false;
+    }
+  };
+
+  const config = await loadConfig();
+  const intervalMinutes = Number(
+    process.env.EVENT_CLEANUP_INTERVAL_MINUTES ||
+    config.defaults?.cleanupIntervalMinutes ||
+    5
+  );
+  const intervalMs = Math.max(intervalMinutes, 1) * 60 * 1000;
+  console.log(`Cleanup automatique actif: intervalle ${Math.max(intervalMinutes, 1)} min, durée event ${config.defaults?.durationMinutes ?? 120} min, délai ${config.defaults?.cleanupDelayMinutes ?? 0} min.`);
+  const timer = setInterval(run, intervalMs);
+  timer.unref?.();
+  setTimeout(run, 30_000).unref?.();
 }
 
 async function refreshEventMessage(client, eventId) {
@@ -691,6 +779,7 @@ async function startBot() {
   const client = createDiscordClient();
   registerInteractionHandlers(client);
   await client.login(token);
+  await startEventCleanupScheduler(client);
   return client;
 }
 

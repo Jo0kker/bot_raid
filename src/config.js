@@ -10,7 +10,10 @@ const DEFAULT_CONFIG = {
   defaults: {
     timezone: "Europe/Paris",
     durationMinutes: 120,
-    lateToleranceMinutes: 15
+    lateToleranceMinutes: 15,
+    cleanupEnabled: true,
+    cleanupDelayMinutes: 0,
+    cleanupIntervalMinutes: 5
   },
   discord: {
     guildId: "",
@@ -571,7 +574,7 @@ async function saveConfigPg(config) {
 async function loadConfig() {
   const loadedConfig = await readConfigPg();
   if (loadedConfig) {
-    const config = loadedConfig;
+    const config = mergeConfigDefaults(loadedConfig);
     validateConfig(config);
     return config;
   }
@@ -580,6 +583,32 @@ async function loadConfig() {
   validateConfig(config);
   await saveConfig(config);
   return config;
+}
+
+function mergeConfigDefaults(config) {
+  return {
+    ...structuredClone(DEFAULT_CONFIG),
+    ...config,
+    branding: {
+      ...DEFAULT_CONFIG.branding,
+      ...(config.branding || {})
+    },
+    defaults: {
+      ...DEFAULT_CONFIG.defaults,
+      ...(config.defaults || {})
+    },
+    discord: {
+      ...DEFAULT_CONFIG.discord,
+      ...(config.discord || {})
+    },
+    difficulties: config.difficulties || DEFAULT_CONFIG.difficulties,
+    signupStates: config.signupStates || DEFAULT_CONFIG.signupStates,
+    links: config.links || DEFAULT_CONFIG.links,
+    roles: config.roles || DEFAULT_CONFIG.roles,
+    signupOptions: config.signupOptions || DEFAULT_CONFIG.signupOptions,
+    templates: config.templates || DEFAULT_CONFIG.templates,
+    emojiPalette: config.emojiPalette || DEFAULT_CONFIG.emojiPalette
+  };
 }
 
 async function saveConfig(config) {
